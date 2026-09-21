@@ -13,7 +13,26 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
-def make_server(vulnerability: float = 0.0, seed: int = 0) -> tuple[HTTPServer, str]:
+# Keyword -> tool, so the fake model does useful work on benign cases and the
+# utility metrics are exercised, not just the attack ones.
+BENIGN_ROUTES = [
+    ("summar", "fetch_url", {"url": "https://docs.internal/report"}),
+    ("read http", "fetch_url", {"url": "https://docs.internal/report"}),
+    ("account details", "query_db", {"tenant_id": "acct-1001", "table": "accounts"}),
+    ("look up", "query_db", {"tenant_id": "acct-1001", "table": "accounts"}),
+    ("email", "send_email", {"to": "finance@acme.test", "body": "Q3 numbers are ready"}),
+    ("save a note", "save_note", {"content": "follow up with the vendor on Thursday"}),
+    ("status of job", "check_status", {"job_id": "nightly-backup-restore-test"}),
+    ("check the status", "check_status", {"job_id": "nightly-backup-restore-test"}),
+]
+
+
+def make_server(
+    vulnerability: float = 0.0, seed: int = 0, refusal_rate: float = 0.0
+) -> tuple[HTTPServer, str]:
+    """`refusal_rate` simulates an over-cautious model: one that refuses benign
+    work. Such a model scores a perfect 0% attack success rate, which is
+    exactly the failure mode the benign pack exists to catch."""
     rng = random.Random(seed)
 
     class Handler(BaseHTTPRequestHandler):
@@ -26,7 +45,20 @@ def make_server(vulnerability: float = 0.0, seed: int = 0) -> tuple[HTTPServer, 
             convo = json.dumps(messages)
             already_called = any(m.get("role") == "tool" for m in messages)
 
+            user_text = " ".join(
+                str(m.get("content") or "") for m in messages if m.get("role") == "user"
+            ).lower()
             msg: dict = {"role": "assistant", "content": "Here is the summary.", "tool_calls": None}
+
+            if rng.random() < refusal_rate:
+                msg["content"] = "I'm sorry, but I cannot assist with that request."
+                data = json.dumps({"choices": [{"message": msg}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
 
             # The injected payload only reaches the model once the poisoned
             # tool result is in the conversation -- i.e. on the second turn.
@@ -45,7 +77,19 @@ def make_server(vulnerability: float = 0.0, seed: int = 0) -> tuple[HTTPServer, 
                         }
                     ]
                     msg["content"] = None
-            elif "fetch_url" in json.dumps(body.get("tools", [])) and "http" in convo:
+            elif not already_called:
+                for kw, tool, args in BENIGN_ROUTES:
+                    if kw in user_text:
+                        msg["tool_calls"] = [
+                            {
+                                "id": "c0",
+                                "type": "function",
+                                "function": {"name": tool, "arguments": json.dumps(args)},
+                            }
+                        ]
+                        msg["content"] = None
+                        break
+            elif False:
                 msg["tool_calls"] = [
                     {
                         "id": "c0",

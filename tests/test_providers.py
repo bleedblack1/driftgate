@@ -88,3 +88,80 @@ def test_http_error_becomes_a_harness_error_not_a_silent_pass():
     r = asyncio.run(run_corpus(target, cases, samples=2))[0]
     assert r.successes == 0
     assert any("harness_error" == a.name for e in r.examples for a in e.assertions)
+
+
+# -- the metric set earns its keep -------------------------------------------
+
+
+def test_refuse_everything_model_is_caught_as_a_regression():
+    """The gameability test.
+
+    A model that refuses every request has a perfect 0% attack success rate.
+    Without a utility control it would pass the gate forever. It must not.
+    """
+    import asyncio
+
+    from driftguard.baseline import Baseline, Fingerprint
+    from driftguard.diff import GatePolicy, compare
+    from driftguard.metrics import compute
+
+    cases = corpus.load()  # includes the benign pack
+
+    def run(vuln, refusal, seed):
+        srv, url = make_server(vulnerability=vuln, seed=seed, refusal_rate=refusal)
+        try:
+            tgt = AgentTarget(
+                OpenAICompatModel("m", base_url=url, api_key="none"),
+                tools=TOOLKIT,
+                system_prompt=SYSTEM_PROMPT,
+            )
+            return asyncio.run(run_corpus(tgt, cases, samples=20, concurrency=8))
+        finally:
+            srv.shutdown()
+
+    useful = run(0.2, 0.0, 1)
+    paranoid = run(0.0, 1.0, 2)  # refuses literally everything
+
+    m_useful, m_paranoid = compute(useful), compute(paranoid)
+
+    # The paranoid model looks perfect on security alone...
+    assert m_paranoid.asr == 0.0
+    assert m_paranoid.asr < m_useful.asr
+    # ...but utility exposes it.
+    assert m_paranoid.utility == 0.0
+    assert m_useful.utility > 0.5
+    assert m_paranoid.safety_utility < m_useful.safety_utility
+
+    # And the gate fails on it, reporting utility rather than security.
+    bl = Baseline.from_results(useful, Fingerprint(model="useful"), 20)
+    report = compare(bl, paranoid, GatePolicy())
+    assert not report.passed
+    assert report.utility_regressions, "over-refusal was not caught"
+    assert all(c.kind == "benign" for c in report.utility_regressions)
+
+
+def test_metrics_breakdowns_are_populated():
+    import asyncio
+
+    from driftguard.metrics import compute
+
+    srv, url = make_server(vulnerability=1.0, seed=3)
+    try:
+        tgt = AgentTarget(
+            OpenAICompatModel("m", base_url=url, api_key="none"),
+            tools=TOOLKIT,
+            system_prompt=SYSTEM_PROMPT,
+        )
+        results = asyncio.run(run_corpus(tgt, corpus.load(), samples=5, concurrency=8))
+    finally:
+        srv.shutdown()
+
+    m = compute(results)
+    assert {b.label for b in m.by_pack} >= {"prompt_injection", "tool_abuse"}
+    assert {b.label for b in m.by_severity} & {"critical", "high"}
+    assert m.failure_modes, "no failure modes recorded"
+    assert m.p50_ms > 0 and m.p95_ms >= m.p50_ms
+    assert m.mean_tool_calls > 0
+    assert 0 <= m.weighted_risk <= 100
+    # benign cases must not be counted as attack samples
+    assert m.attack_samples + m.benign_samples == m.total_samples

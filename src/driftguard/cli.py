@@ -13,8 +13,9 @@ from rich.console import Console
 from . import corpus as corpus_mod
 from .baseline import DEFAULT_PATH, Baseline, Fingerprint
 from .config import DEFAULT_CONFIG, TEMPLATE, Config
-from .diff import compare
-from .report import to_markdown, to_terminal
+from .diff import compare as diff_compare
+from .metrics import compute as compute_metrics
+from .report import metrics_markdown, metrics_panel, to_markdown, to_terminal
 from .runner import run_corpus
 from .stats import required_samples
 
@@ -125,12 +126,14 @@ def check(
     console.print(f"Running {len(cases)} cases x {n} samples against [bold]{target.name}[/]")
     results = asyncio.run(run_corpus(target, cases, n, concurrency=cfg.concurrency))
 
-    report = compare(bl, results, cfg.gate)
+    report = diff_compare(bl, results, cfg.gate)
     report.fingerprint_changed = bl.fingerprint.diff(_fingerprint(target, cases))
     to_terminal(report, console)
+    m = compute_metrics(results)
+    metrics_panel(m, console, title="current metrics")
 
     if markdown:
-        markdown.write_text(to_markdown(report))
+        markdown.write_text(to_markdown(report) + metrics_markdown(m))
         console.print(f"[dim]wrote {markdown}[/]")
 
     raise typer.Exit(0 if report.passed else 1)
@@ -159,7 +162,7 @@ def demo(
     console.print(f"[bold]2.[/] check after 'upgrading' to a model with vulnerability={vulnerability}\n")
     new_results = asyncio.run(run_corpus(risky, cases, samples))
 
-    report = compare(bl, new_results, GatePolicy())
+    report = diff_compare(bl, new_results, GatePolicy())
     report.fingerprint_changed = bl.fingerprint.diff(_fingerprint(risky, cases))
     to_terminal(report, console)
     raise typer.Exit(0 if report.passed else 1)
@@ -195,17 +198,21 @@ def scan(
     t = Table(box=None, header_style="bold")
     t.add_column("case")
     t.add_column("sev")
-    t.add_column("attack success", justify="right")
+    t.add_column("violations", justify="right")
     t.add_column("title", overflow="ellipsis", max_width=48)
-    for r in sorted(results, key=lambda r: (-r.rate, r.case_id)):
+    for r in sorted(results, key=lambda r: (r.kind, -r.rate, r.case_id)):
         colour = "red" if r.rate >= 0.3 else "yellow" if r.rate else "green"
-        t.add_row(r.case_id, r.severity, f"[{colour}]{r.successes}/{r.samples}[/]", r.title)
+        label = "task failed" if r.kind == "benign" else "attack ok"
+        t.add_row(
+            r.case_id,
+            r.severity,
+            f"[{colour}]{r.successes}/{r.samples}[/] [dim]{label}[/]",
+            r.title,
+        )
     console.print(t)
 
-    total = sum(r.successes for r in results)
-    n = sum(r.samples for r in results)
-    console.print(f"\noverall attack success rate: [bold]{total}/{n}[/] ({total / n:.0%})")
-    console.print("[dim]Snapshot only. `driftguard baseline` to start gating changes.[/]")
+    metrics_panel(compute_metrics(results), console, title=f"metrics -- {target.name}")
+    console.print("\n[dim]Snapshot only. `driftguard baseline` to start gating changes.[/]")
 
 
 @app.command()
@@ -279,13 +286,30 @@ def compare(
             row.append(cell)
         t.add_row(*row)
 
-    totals = ["TOTAL", ""]
-    for name in names:
-        tot = sum(r.successes for r in by_model[name].values())
-        n = samples * len(cases)
-        totals.append(f"[bold]{tot / n:.0%}[/]")
+    mets = {name: compute_metrics(list(by_model[name].values())) for name in names}
     t.add_section()
-    t.add_row(*totals)
+
+    def row(label: str, fmt, best=min, dim=False):
+        vals = {n: fmt(mets[n]) for n in names}
+        try:
+            winner = best(vals, key=lambda n: vals[n][1])
+        except (TypeError, ValueError):
+            winner = None
+        cells = [f"[dim]{label}[/]" if dim else f"[bold]{label}[/]", ""]
+        for n in names:
+            text = vals[n][0]
+            cells.append(f"[bold green]{text}[/]" if n == winner and not dim else text)
+        t.add_row(*cells)
+
+    row("attack success", lambda m: (f"{m.asr:.0%}", m.asr), min)
+    row("weighted risk", lambda m: (f"{m.weighted_risk:.0f}", m.weighted_risk), min)
+    row("critical breaches", lambda m: (str(m.critical_failures), m.critical_failures), min)
+    if any(m.benign_samples for m in mets.values()):
+        row("benign success", lambda m: (f"{m.utility:.0%}", -m.utility), min)
+        row("over-refusal", lambda m: (f"{m.over_refusal_rate:.0%}", m.over_refusal_rate), min)
+        row("safety/utility", lambda m: (f"{m.safety_utility:.2f}", -m.safety_utility), min)
+    row("latency p95", lambda m: (f"{m.p95_ms:.0f}ms", m.p95_ms), min, dim=True)
+    row("est. cost", lambda m: (f"${m.est_cost_usd:.3f}", m.est_cost_usd), min, dim=True)
     console.print(t)
     console.print(
         f"\n[dim]* = significantly worse than {ref} (BH-adjusted q < 0.05). "
@@ -294,6 +318,11 @@ def compare(
     console.print(
         "[dim]These numbers describe YOUR tools and prompt, not the models in general.[/]"
     )
+    if not any(m.benign_samples for m in mets.values()):
+        console.print(
+            "[yellow]No benign cases ran -- a low attack rate here might just mean "
+            "the model refuses everything. Include the `benign` pack to tell them apart.[/]"
+        )
 
 
 def main() -> None:

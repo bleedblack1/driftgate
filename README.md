@@ -175,6 +175,89 @@ system_prompt_file: prompts/system.txt
 models: [openai:gpt-4o]
 ```
 
+## Metrics
+
+One number is not enough. Attack success rate alone is **gameable**: an agent
+that refuses every request scores a perfect 0% and passes forever. So every
+run reports security against a utility control, and `driftguard check` fails
+on a regression in *either*.
+
+```
+metrics -- openai:gpt-4o
+attack success rate     4.2%  95% CI 2%-7%  (10/240)
+weighted risk           6.1 /100, severity-weighted
+critical breaches       3
+cases ever breached     4/12
+
+benign task success     96.7% (116/120)
+over-refusal rate       2.5%
+safety/utility          0.96 /1.00
+
+by pack             rate
+prompt_injection   7/100  #######
+tool_abuse          3/80  ###
+data_exfiltration   0/60
+
+by severity   rate
+critical     3/100
+high         5/100
+medium       2/40
+
+failure modes: forbidden_tool x7, canary x2, egress_allowlist x1
+latency p50 840ms / p95 2210ms   tokens 184,320   ~$1.12   2.3 tool calls/sample
+```
+
+**Security**
+- `attack success rate` — headline. Wilson 95% CI, because a rate from 20
+  samples is not a point estimate.
+- `weighted risk` — severity-weighted, 0-100. One critical breach should not
+  read the same as one low-severity one.
+- `critical breaches`, `cases ever breached` — a case that fails 1 time in 30
+  is still a case that fails.
+
+**Utility** (the control that makes the security numbers mean something)
+- `benign task success` — did the agent actually do legitimate work?
+- `over-refusal rate` — how often it refused something harmless.
+- `safety/utility` — the two combined, for ranking. Read the components too.
+
+**Diagnostic** — where you are weak, not just that you are
+- `by pack` — injection vs tool abuse vs exfiltration.
+- `by severity` — is the risk concentrated in the cases that matter?
+- `failure modes` — *which* defense is missing. `forbidden_tool` dominating
+  means an authorization problem; `canary` dominating means an egress problem.
+  Those point at different fixes.
+
+**Operational** — can you afford to run this on every PR?
+- `latency p50/p95`, `tokens`, `est. cost`, `tool calls/sample`, and harness
+  errors (a dead endpoint must never score as "secure").
+
+### Why the utility control is not optional
+
+Run a deliberately over-cautious model through `compare` and it sweeps every
+security metric:
+
+```
+                   capable-model   paranoid-model
+ attack success               2%               0%
+ weighted risk                 2                0
+ critical breaches             4                0
+ benign success             100%               5%
+ over-refusal                 0%              95%
+ safety/utility             0.99             0.10
+```
+
+The paranoid model is "perfectly secure" and completely useless. Only the
+bottom three rows say so. `driftguard check` treats that as a failure and
+labels it a *utility* regression, not a security one:
+
+```
+FAIL 6 utility regression(s)
+Note: nothing got less safe -- the agent got less useful.
+Refusing legitimate work is a regression too.
+```
+
+Enforced by `test_refuse_everything_model_is_caught_as_a_regression`.
+
 ## Attack packs
 
 | pack | covers |
@@ -182,6 +265,7 @@ models: [openai:gpt-4o]
 | `prompt_injection` | indirect injection via tool results, memory poisoning, markdown-image exfil, system-prompt disclosure |
 | `tool_abuse` | destructive calls, cross-tenant access, argument tampering, unbounded loops |
 | `data_exfiltration` | canary containment across replies, tool arguments, and egress |
+| `benign` | **control group** - legitimate requests the agent must still complete |
 
 Cases are YAML. Add your own via `corpus_dirs` — the app-specific ones are the
 valuable ones.
@@ -202,9 +286,12 @@ valuable ones.
 
 ### Assertion types
 
-Deterministic (preferred — binary and reproducible):
+Attack cases - deterministic (preferred, binary and reproducible):
 `forbidden_tool`, `forbidden_tool_arg`, `canary`, `egress_allowlist`,
 `no_output_match`, `max_tool_calls`
+
+Benign cases - what the agent *should* do:
+`required_tool`, `no_refusal`, `output_contains`
 
 Judged (weakest tier — a judge model is attackable by the same injection it's
 grading): `refusal`
@@ -237,7 +324,7 @@ one success is one too many, regardless of the p-value.
 
 ```bash
 uv venv && uv pip install -e ".[dev]"
-.venv/bin/pytest          # 33 tests, no network, no API keys
+.venv/bin/pytest          # 35 tests, no network, no API keys
 .venv/bin/driftguard demo
 ```
 

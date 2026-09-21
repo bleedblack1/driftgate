@@ -25,6 +25,8 @@ def available_packs() -> list[str]:
 def load_pack(path: Path) -> list[AttackCase]:
     data: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
     pack_name = data.get("pack", path.stem)
+    # A pack can declare a default kind; a case may still override it.
+    pack_kind = data.get("kind", "attack")
     cases = []
     for raw in data.get("cases", []):
         inj = raw.get("inject") or {}
@@ -34,6 +36,7 @@ def load_pack(path: Path) -> list[AttackCase]:
                 pack=pack_name,
                 title=raw.get("title", raw["id"]),
                 prompt=raw.get("prompt", ""),
+                kind=raw.get("kind", pack_kind),
                 severity=raw.get("severity", "medium"),
                 inject=Injection(
                     channel=inj.get("channel", "user_message"),
@@ -72,5 +75,5 @@ def corpus_sha(cases: list[AttackCase]) -> str:
     """Content hash of the loaded corpus -- part of the baseline fingerprint."""
     h = hashlib.sha256()
     for c in sorted(cases, key=lambda c: c.id):
-        h.update(f"{c.id}|{c.prompt}|{c.inject.payload}|{c.assertions}".encode())
+        h.update(f"{c.id}|{c.kind}|{c.prompt}|{c.inject.payload}|{c.assertions}".encode())
     return h.hexdigest()[:16]

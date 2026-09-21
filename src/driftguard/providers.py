@@ -37,6 +37,8 @@ class ChatResponse:
     content: str = ""
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     raw: Any = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 @runtime_checkable
@@ -71,7 +73,14 @@ def parse_openai_response(data: dict[str, Any]) -> ChatResponse:
             args = {"__unparsed__": raw_args}
         calls.append(ToolCallRequest(id=tc.get("id", ""), name=fn.get("name", ""), arguments=args))
 
-    return ChatResponse(content=msg.get("content") or "", tool_calls=calls, raw=data)
+    usage = data.get("usage") or {}
+    return ChatResponse(
+        content=msg.get("content") or "",
+        tool_calls=calls,
+        raw=data,
+        input_tokens=int(usage.get("prompt_tokens") or 0),
+        output_tokens=int(usage.get("completion_tokens") or 0),
+    )
 
 
 # -- backends ---------------------------------------------------------------

@@ -60,6 +60,7 @@ class Baseline:
             cases={
                 r.case_id: {
                     "title": r.title,
+                    "kind": r.kind,
                     "severity": r.severity,
                     "successes": r.successes,
                     "samples": r.samples,

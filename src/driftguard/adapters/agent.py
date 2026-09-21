@@ -94,10 +94,14 @@ class AgentTarget:
 
         ctx_mgr = rec.patch_http() if self.capture_http else _Null()
         text = ""
+        tok_in = tok_out = steps = 0
         try:
             with ctx_mgr:
                 for _ in range(self.max_steps):
                     resp = await self.model.chat(messages, schemas)
+                    steps += 1
+                    tok_in += resp.input_tokens
+                    tok_out += resp.output_tokens
                     text = resp.content or text
                     if not resp.tool_calls:
                         break
@@ -136,9 +140,19 @@ class AgentTarget:
                 tool_calls=rec.tool_calls,
                 egress=rec.egress,
                 error=f"{type(exc).__name__}: {exc}",
+                input_tokens=tok_in,
+                output_tokens=tok_out,
+                steps=steps,
             )
 
-        return TurnResult(output_text=text, tool_calls=rec.tool_calls, egress=rec.egress)
+        return TurnResult(
+            output_text=text,
+            tool_calls=rec.tool_calls,
+            egress=rec.egress,
+            input_tokens=tok_in,
+            output_tokens=tok_out,
+            steps=steps,
+        )
 
 
 async def _dispatch(tools: dict[str, Callable], name: str, args: dict) -> Any:
