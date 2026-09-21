@@ -63,6 +63,16 @@ corpus_dirs: []
 samples: 20
 concurrency: 4
 
+# Model responses are cached on disk so re-running the gate is nearly free.
+# `baseline` writes the cache but never reads it: ground truth should be
+# measured live. `check`, `scan` and `compare` replay from it by default.
+cache:
+  enabled: true
+  dir: .driftguard-cache
+  # 0 = never expire. Set this if your provider may change the model behind a
+  # stable alias -- a warm cache would otherwise hide exactly that drift.
+  ttl_days: 0
+
 gate:
   alpha: 0.05          # significance threshold
   min_delta: 0.10      # ignore statistically-real but tiny moves
@@ -79,6 +89,9 @@ class Config:
     system_prompt: str = ""
     system_prompt_file: str = ""
     max_steps: int = 8
+    cache_enabled: bool = True
+    cache_dir: str = ".driftguard-cache"
+    cache_ttl_days: float = 0.0
     packs: list[str] = field(default_factory=list)
     corpus_dirs: list[str] = field(default_factory=list)
     samples: int = 20
@@ -100,6 +113,9 @@ class Config:
             system_prompt=data.get("system_prompt", ""),
             system_prompt_file=data.get("system_prompt_file", ""),
             max_steps=int(data.get("max_steps", 8)),
+            cache_enabled=bool((data.get("cache") or {}).get("enabled", True)),
+            cache_dir=str((data.get("cache") or {}).get("dir", ".driftguard-cache")),
+            cache_ttl_days=float((data.get("cache") or {}).get("ttl_days", 0)),
             packs=data.get("packs") or [],
             corpus_dirs=data.get("corpus_dirs") or [],
             samples=int(data.get("samples", 20)),
@@ -142,7 +158,19 @@ class Config:
             prompt = defaults.SYSTEM_PROMPT
         return tools, prompt
 
-    def build_targets(self, model_override: list[str] | None = None) -> list[Any]:
+    def make_cache(self, read: bool = True, write: bool = True) -> Any:
+        from .cache import ResponseCache
+
+        return ResponseCache(
+            dir=Path(self.cache_dir),
+            ttl_seconds=self.cache_ttl_days * 86400,
+            read=read and self.cache_enabled,
+            write=write and self.cache_enabled,
+        )
+
+    def build_targets(
+        self, model_override: list[str] | None = None, cache: Any = None
+    ) -> list[Any]:
         """Build every target this config describes.
 
         `target` (your own agent) wins when both are set, because a real agent
@@ -158,9 +186,18 @@ class Config:
                 "or pass --model"
             )
         tools, prompt = self.resolve_toolkit()
+
+        def build_model(spec):
+            model = model_from_config(spec)
+            if cache is not None:
+                from .cache import CachedModel
+
+                return CachedModel(model, cache)
+            return model
+
         return [
             AgentTarget(
-                model_from_config(spec),
+                build_model(spec),
                 tools=tools,
                 system_prompt=prompt,
                 max_steps=self.max_steps,
@@ -168,8 +205,8 @@ class Config:
             for spec in specs
         ]
 
-    def build_target(self, model_override: list[str] | None = None) -> Any:
-        targets = self.build_targets(model_override)
+    def build_target(self, model_override: list[str] | None = None, cache: Any = None) -> Any:
+        targets = self.build_targets(model_override, cache=cache)
         if len(targets) > 1:
             raise ValueError(
                 f"{len(targets)} models configured; this command takes one. "

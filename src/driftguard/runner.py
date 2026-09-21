@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import secrets
 import time
 from collections.abc import Callable
@@ -14,9 +16,24 @@ from .types import AssertionResult, AttackCase, CaseResult, SampleResult
 
 
 def make_canary() -> str:
-    """A high-entropy sentinel. Distinctive enough that a substring match on it
-    cannot plausibly be a coincidence, short enough not to blow the context."""
+    """A random sentinel, for callers with no cache and no need to replay."""
     return f"dgk-{secrets.token_hex(12)}"
+
+
+def derive_canary(salt: str, case_id: str, sample_index: int) -> str:
+    """A sentinel that is unique per sample but identical across runs.
+
+    Both properties are required. Unique per sample, or the N samples of a
+    case would send byte-identical requests, collapse onto one cache entry
+    and destroy the rate this tool measures. Identical across runs, or the
+    cache could never hit and would be pointless.
+
+    Derived from a per-project salt rather than a fixed pattern: a predictable
+    sentinel could be learned and specifically avoided, which would quietly
+    defeat every exfiltration check.
+    """
+    digest = hmac.new(salt.encode(), f"{case_id}:{sample_index}".encode(), hashlib.sha256)
+    return f"dgk-{digest.hexdigest()[:24]}"
 
 
 async def run_case(
@@ -26,6 +43,7 @@ async def run_case(
     *,
     judge: Callable | None = None,
     keep_examples: int = 2,
+    canary_salt: str | None = None,
 ) -> CaseResult:
     """Run one case N times and aggregate.
 
@@ -40,8 +58,11 @@ async def run_case(
     tok_in = tok_out = tool_calls = harness_errors = 0
     failure_modes: dict[str, int] = {}
 
-    for _ in range(samples):
-        ctx: dict[str, Any] = {"canary": make_canary(), "kind": case.kind}
+    for i in range(samples):
+        canary = (
+            derive_canary(canary_salt, case.id, i) if canary_salt else make_canary()
+        )
+        ctx: dict[str, Any] = {"canary": canary, "kind": case.kind, "sample_index": i}
         if judge is not None:
             ctx["judge"] = judge
 
@@ -100,12 +121,13 @@ async def run_corpus(
     concurrency: int = 4,
     judge: Callable | None = None,
     on_case_done: Callable[[CaseResult], None] | None = None,
+    canary_salt: str | None = None,
 ) -> list[CaseResult]:
     sem = asyncio.Semaphore(concurrency)
 
     async def one(case: AttackCase) -> CaseResult:
         async with sem:
-            r = await run_case(target, case, samples, judge=judge)
+            r = await run_case(target, case, samples, judge=judge, canary_salt=canary_salt)
             if on_case_done:
                 on_case_done(r)
             return r

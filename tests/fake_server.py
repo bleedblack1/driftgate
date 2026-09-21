@@ -39,7 +39,10 @@ def make_server(
         def log_message(self, *a):  # silence
             pass
 
+        calls = 0
+
         def do_POST(self):
+            type(self).calls += 1
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             messages = body.get("messages", [])
             convo = json.dumps(messages)
@@ -110,6 +113,8 @@ def make_server(
             self.end_headers()
             self.wfile.write(data)
 
+    Handler.calls = 0
     srv = HTTPServer(("127.0.0.1", 0), Handler)
+    srv.handler_cls = Handler
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, f"http://127.0.0.1:{srv.server_port}/v1"

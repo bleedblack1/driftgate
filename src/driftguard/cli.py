@@ -26,15 +26,27 @@ app = typer.Typer(
 console = Console()
 
 
-def _load(config: Path, samples: int | None, packs: list[str] | None, models: list[str] | None = None):
+def _load(
+    config: Path,
+    samples: int | None,
+    packs: list[str] | None,
+    models: list[str] | None = None,
+    *,
+    cache_read: bool = True,
+    cache_write: bool = True,
+    no_cache: bool = False,
+):
     cfg = Config.load(config)
+    if no_cache:
+        cfg.cache_enabled = False
     if samples:
         cfg.samples = samples
     if packs:
         cfg.packs = packs
     cases = corpus_mod.load(cfg.packs, [Path(d) for d in cfg.corpus_dirs])
-    target = cfg.build_target(models or None)
-    return cfg, cases, target
+    cache = cfg.make_cache(read=cache_read, write=cache_write)
+    target = cfg.build_target(models or None, cache=cache)
+    return cfg, cases, target, cache
 
 
 def _fingerprint(target, cases) -> Fingerprint:
@@ -75,6 +87,7 @@ def baseline(
     samples: int = typer.Option(None, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
     model: list[str] = typer.Option(None, "--model", "-m", help="override configured model(s)"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="do not write the response cache"),
     force: bool = typer.Option(False, "--force", help="overwrite an existing baseline"),
 ) -> None:
     """Record the current security posture. Commit the resulting file."""
@@ -83,10 +96,21 @@ def baseline(
         console.print("Pass --force if that is what you intend.")
         raise typer.Exit(1)
 
-    cfg, cases, target = _load(config, samples, pack, model)
+    # A baseline is ground truth: never replayed, always measured live.
+    cfg, cases, target, cache = _load(
+        config, samples, pack, model, cache_read=False, no_cache=no_cache
+    )
     console.print(f"Running {len(cases)} cases x {cfg.samples} samples against [bold]{target.name}[/]")
 
-    results = asyncio.run(run_corpus(target, cases, cfg.samples, concurrency=cfg.concurrency))
+    results = asyncio.run(
+        run_corpus(
+            target,
+            cases,
+            cfg.samples,
+            concurrency=cfg.concurrency,
+            canary_salt=cache.salt(),
+        )
+    )
     bl = Baseline.from_results(results, _fingerprint(target, cases), cfg.samples)
     bl.save(out)
 
@@ -112,6 +136,8 @@ def check(
     samples: int = typer.Option(None, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
     model: list[str] = typer.Option(None, "--model", "-m", help="override configured model(s)"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="force live calls, ignore the cache"),
+    refresh_cache: bool = typer.Option(False, "--refresh-cache", help="re-call and overwrite cached entries"),
     markdown: Path = typer.Option(None, "--markdown", help="also write a PR-comment file"),
 ) -> None:
     """Re-run the corpus and fail (exit 1) if security got worse."""
@@ -120,17 +146,22 @@ def check(
         raise typer.Exit(2)
 
     bl = Baseline.load(baseline_path)
-    cfg, cases, target = _load(config, samples, pack, model)
+    cfg, cases, target, cache = _load(
+        config, samples, pack, model, cache_read=not refresh_cache, no_cache=no_cache
+    )
     n = samples or bl.samples or cfg.samples
 
     console.print(f"Running {len(cases)} cases x {n} samples against [bold]{target.name}[/]")
-    results = asyncio.run(run_corpus(target, cases, n, concurrency=cfg.concurrency))
+    results = asyncio.run(
+        run_corpus(target, cases, n, concurrency=cfg.concurrency, canary_salt=cache.salt())
+    )
 
     report = diff_compare(bl, results, cfg.gate)
     report.fingerprint_changed = bl.fingerprint.diff(_fingerprint(target, cases))
     to_terminal(report, console)
     m = compute_metrics(results)
     metrics_panel(m, console, title="current metrics")
+    _cache_line(cache, console)
 
     if markdown:
         markdown.write_text(to_markdown(report) + metrics_markdown(m))
@@ -175,6 +206,7 @@ def scan(
     samples: int = typer.Option(10, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
     concurrency: int = typer.Option(4, "--concurrency"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="force live calls, ignore the cache"),
 ) -> None:
     """Run the corpus against a model once. No baseline, no config needed.
 
@@ -187,11 +219,16 @@ def scan(
     cfg = Config.load(config) if config.exists() else Config()
     if pack:
         cfg.packs = list(pack)
+    if no_cache:
+        cfg.cache_enabled = False
     cases = corpus_mod.load(cfg.packs or None, [Path(d) for d in cfg.corpus_dirs])
-    target = cfg.build_target(list(model) or None)
+    cache = cfg.make_cache()
+    target = cfg.build_target(list(model) or None, cache=cache)
 
     console.print(f"{len(cases)} cases x {samples} samples against [bold]{target.name}[/]\n")
-    results = asyncio.run(run_corpus(target, cases, samples, concurrency=concurrency))
+    results = asyncio.run(
+        run_corpus(target, cases, samples, concurrency=concurrency, canary_salt=cache.salt())
+    )
 
     from rich.table import Table
 
@@ -212,6 +249,7 @@ def scan(
     console.print(t)
 
     metrics_panel(compute_metrics(results), console, title=f"metrics -- {target.name}")
+    _cache_line(cache, console)
     console.print("\n[dim]Snapshot only. `driftguard baseline` to start gating changes.[/]")
 
 
@@ -222,6 +260,7 @@ def compare(
     samples: int = typer.Option(10, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
     concurrency: int = typer.Option(4, "--concurrency"),
+    no_cache: bool = typer.Option(False, "--no-cache", help="force live calls, ignore the cache"),
 ) -> None:
     """Run the same corpus against several models side by side.
 
@@ -238,8 +277,11 @@ def compare(
     cfg = Config.load(config) if config.exists() else Config()
     if pack:
         cfg.packs = list(pack)
+    if no_cache:
+        cfg.cache_enabled = False
     cases = corpus_mod.load(cfg.packs or None, [Path(d) for d in cfg.corpus_dirs])
-    targets = cfg.build_targets(list(model) or None)
+    cache = cfg.make_cache()
+    targets = cfg.build_targets(list(model) or None, cache=cache)
     if len(targets) < 2:
         console.print("[red]compare needs at least two models[/] (repeat --model)")
         raise typer.Exit(2)
@@ -252,7 +294,9 @@ def compare(
     by_model: dict[str, dict[str, Any]] = {}
     for tgt in targets:
         console.print(f"[dim]running {tgt.name}...[/]")
-        res = asyncio.run(run_corpus(tgt, cases, samples, concurrency=concurrency))
+        res = asyncio.run(
+            run_corpus(tgt, cases, samples, concurrency=concurrency, canary_salt=cache.salt())
+        )
         by_model[tgt.name] = {r.case_id: r for r in res}
 
     names = list(by_model)
@@ -318,10 +362,51 @@ def compare(
     console.print(
         "[dim]These numbers describe YOUR tools and prompt, not the models in general.[/]"
     )
+    _cache_line(cache, console)
     if not any(m.benign_samples for m in mets.values()):
         console.print(
             "[yellow]No benign cases ran -- a low attack rate here might just mean "
             "the model refuses everything. Include the `benign` pack to tell them apart.[/]"
+        )
+
+
+def _cache_line(cache, console) -> None:
+    st = cache.stats
+    if not st.lookups:
+        return
+    if st.hits:
+        console.print(
+            f"[dim]cache: {st.hits}/{st.lookups} hits ({st.hit_rate:.0%}), "
+            f"~${st.saved_usd:.3f} saved[/]"
+        )
+    else:
+        console.print(f"[dim]cache: cold, {st.writes} entries written[/]")
+
+
+@app.command()
+def cache(
+    clear: bool = typer.Option(False, "--clear", help="delete all cached responses"),
+    config: Path = typer.Option(DEFAULT_CONFIG, "--config", "-c"),
+) -> None:
+    """Show or clear the response cache."""
+    cfg = Config.load(config) if config.exists() else Config()
+    c = cfg.make_cache()
+    if clear:
+        n = c.clear()
+        console.print(f"[green]removed {n} cached response(s)[/] from {c.dir}")
+        return
+    entries = c.entries()
+    if not entries:
+        console.print(f"cache is empty ({c.dir})")
+        return
+    console.print(f"[bold]{entries}[/] cached responses in {c.dir}")
+    console.print(f"[dim]{c.size_bytes() / 1024:.0f} KiB on disk[/]")
+    if cfg.cache_ttl_days:
+        console.print(f"[dim]entries expire after {cfg.cache_ttl_days} day(s)[/]")
+    else:
+        console.print(
+            "[dim]no expiry set. If your provider may change the model behind a "
+            "stable alias, set cache.ttl_days so a warm cache cannot hide it.[/]"
         )
 
 

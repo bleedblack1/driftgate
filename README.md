@@ -34,6 +34,7 @@ FAIL 2 security regressions
 - [Gating changes in CI](#gating-changes-in-ci)
 - [Testing your own agent](#testing-your-own-agent)
 - [Metrics](#metrics)
+- [Caching](#caching)
 - [Attack packs and cases](#attack-packs-and-cases)
 - [Assertions](#assertions)
 - [Configuration](#configuration)
@@ -380,6 +381,81 @@ This behavior is enforced by
 
 ---
 
+## Caching
+
+Running the corpus costs real money: cases times samples times models API
+calls per invocation. A gate nobody can afford to run is a gate that gets
+switched off, so model responses are cached on disk and replayed by default.
+
+```
+$ driftguard check          # first run
+...
+cache: cold, 590 entries written
+
+$ driftguard check          # same corpus, same model
+...
+cache: 590/590 hits (100%), ~$1.12 saved
+```
+
+Measured on the full corpus at 20 samples per case:
+
+```
+cold:  590 API calls   8.37s   ASR 2.5%   utility 100.0%
+warm:    0 API calls   0.19s   ASR 2.5%   utility 100.0%
+```
+
+Every per-case rate is identical. That property is the point, and it is
+enforced by `tests/test_cache.py::test_cached_run_reproduces_rates_exactly`.
+
+### The trap this avoids
+
+driftguard measures a rate over N samples. A cache keyed only on
+`(model, messages, tools)` would collapse all N samples of a case onto a
+single entry and return the same response every time, turning every measured
+rate into 0/N or N/N and silently destroying the statistics the entire tool
+rests on.
+
+The per-sample canary is what keeps the N requests distinct. That is why
+`derive_canary` is deterministic rather than random: unique within a run, so
+the samples stay samples; identical across runs, so the cache can hit at all.
+It is an HMAC of a per-project salt with the case id and sample index. The
+salt is generated once and stored beside the cache, because a fixed, guessable
+sentinel could be learned and specifically avoided, which would quietly defeat
+every exfiltration check.
+
+`tests/test_cache.py::test_cache_does_not_collapse_samples` guards this.
+
+### What invalidates an entry
+
+The key covers the model id, the full message list (so the system prompt is
+included), and the tool schemas. Change any of the three and the cache misses,
+which is exactly the set of changes that alter the attack surface.
+
+### What the cache cannot see
+
+The key covers what you *declared*, not what the provider actually served. If
+a vendor silently changes the model behind a stable alias, a warm cache will
+replay the old behavior and hide precisely the drift this tool exists to
+catch. Three mitigations:
+
+- `baseline` writes the cache but never reads it. Ground truth is always
+  measured live.
+- Set `cache.ttl_days` so entries expire and get re-measured.
+- `--no-cache` forces live calls; `--refresh-cache` re-calls and overwrites.
+
+A cache that cannot be written, or that holds a corrupt entry, degrades to a
+miss. It never fails the run.
+
+```bash
+driftguard cache            # entry count and size on disk
+driftguard cache --clear    # delete everything
+```
+
+Add `.driftguard-cache/` to `.gitignore`. In CI, restore it between runs with
+`actions/cache` to make repeated checks on the same pull request nearly free.
+
+---
+
 ## Attack packs and cases
 
 | pack | covers |
@@ -504,6 +580,14 @@ samples: 20
 concurrency: 4
 max_steps: 8
 
+# Responses are cached so re-running the gate is nearly free. `baseline`
+# writes the cache but never reads it; ground truth is measured live.
+cache:
+  enabled: true
+  dir: .driftguard-cache
+  ttl_days: 0          # 0 = never expire
+
+
 gate:
   alpha: 0.05          # FDR threshold, applied to BH-adjusted q, not raw p
   min_delta: 0.10      # ignore statistically real but trivially small moves
@@ -532,6 +616,7 @@ rather than a hypothesis test.
 | `driftguard compare` | run the same corpus across several models side by side |
 | `driftguard baseline` | record the current posture and write the baseline file |
 | `driftguard check` | re-run and exit 1 if security or utility got worse |
+| `driftguard cache` | show or clear the response cache |
 
 Common flags:
 
@@ -539,8 +624,10 @@ Common flags:
 -m, --model      provider:model, repeatable
 -n, --samples    samples per case
 -p, --pack       restrict to named packs
-    --markdown   write a pull-request-ready report
-    --force      overwrite an existing baseline
+    --markdown        write a pull-request-ready report
+    --force           overwrite an existing baseline
+    --no-cache        force live calls, ignore the cache
+    --refresh-cache   re-call and overwrite cached entries
 ```
 
 ---
@@ -577,6 +664,11 @@ every time. See `tests/test_gate.py`.
 driftguard says so and tells you the N required to resolve it, rather than
 failing your build on noise or hiding the signal entirely.
 
+**Caching never changes a measured number.** Replaying from disk reproduces
+every per-case rate exactly, or the cache would be worse than useless. See
+[Caching](#caching) for the per-sample keying that makes this hold, and for
+the one thing a cache structurally cannot detect.
+
 **Dependencies are kept small:** typer, pyyaml, rich, httpx. A security tool
 should be cheap to install and small to audit.
 
@@ -605,7 +697,7 @@ should be cheap to install and small to audit.
 uv venv
 uv pip install -e ".[dev]"
 
-.venv/bin/pytest            # 35 tests, no network, no API keys
+.venv/bin/pytest            # 49 tests, no network, no API keys
 .venv/bin/driftguard demo
 ```
 
@@ -628,6 +720,7 @@ src/driftguard/
   stats.py          Fisher exact, Wilson intervals, BH correction
   diff.py           baseline comparison and gate policy
   metrics.py        security, utility, diagnostic, operational metrics
+  cache.py          on-disk response cache and CachedModel wrapper
   report.py         terminal and markdown output
   cli.py            init, packs, demo, scan, compare, baseline, check
 ```
