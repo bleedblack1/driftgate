@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -24,14 +25,14 @@ app = typer.Typer(
 console = Console()
 
 
-def _load(config: Path, samples: int | None, packs: list[str] | None):
+def _load(config: Path, samples: int | None, packs: list[str] | None, models: list[str] | None = None):
     cfg = Config.load(config)
     if samples:
         cfg.samples = samples
     if packs:
         cfg.packs = packs
     cases = corpus_mod.load(cfg.packs, [Path(d) for d in cfg.corpus_dirs])
-    target = cfg.build_target()
+    target = cfg.build_target(models or None)
     return cfg, cases, target
 
 
@@ -72,6 +73,7 @@ def baseline(
     out: Path = typer.Option(DEFAULT_PATH, "--out", "-o"),
     samples: int = typer.Option(None, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
+    model: list[str] = typer.Option(None, "--model", "-m", help="override configured model(s)"),
     force: bool = typer.Option(False, "--force", help="overwrite an existing baseline"),
 ) -> None:
     """Record the current security posture. Commit the resulting file."""
@@ -80,7 +82,7 @@ def baseline(
         console.print("Pass --force if that is what you intend.")
         raise typer.Exit(1)
 
-    cfg, cases, target = _load(config, samples, pack)
+    cfg, cases, target = _load(config, samples, pack, model)
     console.print(f"Running {len(cases)} cases x {cfg.samples} samples against [bold]{target.name}[/]")
 
     results = asyncio.run(run_corpus(target, cases, cfg.samples, concurrency=cfg.concurrency))
@@ -108,6 +110,7 @@ def check(
     baseline_path: Path = typer.Option(DEFAULT_PATH, "--baseline", "-b"),
     samples: int = typer.Option(None, "--samples", "-n"),
     pack: list[str] = typer.Option(None, "--pack", "-p"),
+    model: list[str] = typer.Option(None, "--model", "-m", help="override configured model(s)"),
     markdown: Path = typer.Option(None, "--markdown", help="also write a PR-comment file"),
 ) -> None:
     """Re-run the corpus and fail (exit 1) if security got worse."""
@@ -116,7 +119,7 @@ def check(
         raise typer.Exit(2)
 
     bl = Baseline.load(baseline_path)
-    cfg, cases, target = _load(config, samples, pack)
+    cfg, cases, target = _load(config, samples, pack, model)
     n = samples or bl.samples or cfg.samples
 
     console.print(f"Running {len(cases)} cases x {n} samples against [bold]{target.name}[/]")
@@ -160,6 +163,137 @@ def demo(
     report.fingerprint_changed = bl.fingerprint.diff(_fingerprint(risky, cases))
     to_terminal(report, console)
     raise typer.Exit(0 if report.passed else 1)
+
+
+@app.command()
+def scan(
+    model: list[str] = typer.Option(None, "--model", "-m", help="provider:model, repeatable"),
+    config: Path = typer.Option(DEFAULT_CONFIG, "--config", "-c"),
+    samples: int = typer.Option(10, "--samples", "-n"),
+    pack: list[str] = typer.Option(None, "--pack", "-p"),
+    concurrency: int = typer.Option(4, "--concurrency"),
+) -> None:
+    """Run the corpus against a model once. No baseline, no config needed.
+
+        driftguard scan --model openai:gpt-4o
+        driftguard scan --model ollama:llama3.1
+
+    This is a snapshot of where a model stands, not a gate. Use `baseline`
+    and `check` to catch changes over time.
+    """
+    cfg = Config.load(config) if config.exists() else Config()
+    if pack:
+        cfg.packs = list(pack)
+    cases = corpus_mod.load(cfg.packs or None, [Path(d) for d in cfg.corpus_dirs])
+    target = cfg.build_target(list(model) or None)
+
+    console.print(f"{len(cases)} cases x {samples} samples against [bold]{target.name}[/]\n")
+    results = asyncio.run(run_corpus(target, cases, samples, concurrency=concurrency))
+
+    from rich.table import Table
+
+    t = Table(box=None, header_style="bold")
+    t.add_column("case")
+    t.add_column("sev")
+    t.add_column("attack success", justify="right")
+    t.add_column("title", overflow="ellipsis", max_width=48)
+    for r in sorted(results, key=lambda r: (-r.rate, r.case_id)):
+        colour = "red" if r.rate >= 0.3 else "yellow" if r.rate else "green"
+        t.add_row(r.case_id, r.severity, f"[{colour}]{r.successes}/{r.samples}[/]", r.title)
+    console.print(t)
+
+    total = sum(r.successes for r in results)
+    n = sum(r.samples for r in results)
+    console.print(f"\noverall attack success rate: [bold]{total}/{n}[/] ({total / n:.0%})")
+    console.print("[dim]Snapshot only. `driftguard baseline` to start gating changes.[/]")
+
+
+@app.command()
+def compare(
+    model: list[str] = typer.Option(None, "--model", "-m", help="provider:model, repeatable"),
+    config: Path = typer.Option(DEFAULT_CONFIG, "--config", "-c"),
+    samples: int = typer.Option(10, "--samples", "-n"),
+    pack: list[str] = typer.Option(None, "--pack", "-p"),
+    concurrency: int = typer.Option(4, "--concurrency"),
+) -> None:
+    """Run the same corpus against several models side by side.
+
+        driftguard compare -m openai:gpt-4o -m anthropic:claude-sonnet-5 -m ollama:llama3.1
+
+    Answers "which model is safest for MY agent and MY tools" -- a question
+    generic public benchmarks cannot answer, because they do not know your
+    tools. Significance is measured against the first model listed.
+    """
+    from rich.table import Table
+
+    from .stats import benjamini_hochberg, fisher_exact_greater
+
+    cfg = Config.load(config) if config.exists() else Config()
+    if pack:
+        cfg.packs = list(pack)
+    cases = corpus_mod.load(cfg.packs or None, [Path(d) for d in cfg.corpus_dirs])
+    targets = cfg.build_targets(list(model) or None)
+    if len(targets) < 2:
+        console.print("[red]compare needs at least two models[/] (repeat --model)")
+        raise typer.Exit(2)
+
+    console.print(
+        f"{len(cases)} cases x {samples} samples x {len(targets)} models "
+        f"= {len(cases) * samples * len(targets)} calls\n"
+    )
+
+    by_model: dict[str, dict[str, Any]] = {}
+    for tgt in targets:
+        console.print(f"[dim]running {tgt.name}...[/]")
+        res = asyncio.run(run_corpus(tgt, cases, samples, concurrency=concurrency))
+        by_model[tgt.name] = {r.case_id: r for r in res}
+
+    names = list(by_model)
+    ref = names[0]
+
+    # Significance of each model vs the reference, corrected across the suite.
+    qs: dict[str, dict[str, float]] = {}
+    for name in names[1:]:
+        ps = [
+            fisher_exact_greater(
+                by_model[ref][c.id].successes, samples, by_model[name][c.id].successes, samples
+            )
+            for c in cases
+        ]
+        qs[name] = dict(zip([c.id for c in cases], benjamini_hochberg(ps)))
+
+    t = Table(box=None, header_style="bold")
+    t.add_column("case")
+    t.add_column("sev")
+    for name in names:
+        t.add_column(name, justify="right")
+
+    for c in sorted(cases, key=lambda c: c.id):
+        row = [c.id, c.severity]
+        for name in names:
+            r = by_model[name][c.id]
+            colour = "red" if r.rate >= 0.3 else "yellow" if r.rate else "green"
+            cell = f"[{colour}]{r.successes}/{samples}[/]"
+            if name != ref and qs[name].get(c.id, 1.0) < 0.05:
+                cell += " [red]*[/]"
+            row.append(cell)
+        t.add_row(*row)
+
+    totals = ["TOTAL", ""]
+    for name in names:
+        tot = sum(r.successes for r in by_model[name].values())
+        n = samples * len(cases)
+        totals.append(f"[bold]{tot / n:.0%}[/]")
+    t.add_section()
+    t.add_row(*totals)
+    console.print(t)
+    console.print(
+        f"\n[dim]* = significantly worse than {ref} (BH-adjusted q < 0.05). "
+        f"Lower is safer.[/]"
+    )
+    console.print(
+        "[dim]These numbers describe YOUR tools and prompt, not the models in general.[/]"
+    )
 
 
 def main() -> None:

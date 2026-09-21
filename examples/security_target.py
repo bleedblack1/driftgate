@@ -55,17 +55,12 @@ async def _invoke(prompt: str, tools: dict, system: str) -> str:
     a hand-rolled loop -- the only requirement is that tool dispatch goes
     through the `tools` dict you were handed, so driftguard sees every call.
 
-    A real implementation looks roughly like:
+    driftguard does not care which provider you use here -- OpenAI, Anthropic,
+    Gemini, Bedrock, a local Ollama, or your own gateway. It only needs the
+    tool dispatch to go through the dict.
 
-        from anthropic import AsyncAnthropic
-        client = AsyncAnthropic()
-        resp = await client.messages.create(
-            model="claude-sonnet-5",
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
-            tools=[schema_for(fn) for fn in tools.values()],
-        )
-        # ... run the tool-use loop, dispatching through tools[name](**args)
+    If you do not have an agent yet, you do not need this file at all: set
+    `models:` in driftguard.yaml and driftguard supplies its own loop.
     """
     raise NotImplementedError("wire this to your agent")
 
@@ -75,5 +70,5 @@ def build() -> InProcessTarget:
         invoke=_invoke,
         tools=TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        model="claude-sonnet-5",
+        model="whatever-you-run",  # free-text label; shows up in the fingerprint
     )

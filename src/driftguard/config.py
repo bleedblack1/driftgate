@@ -9,7 +9,9 @@ from typing import Any
 
 import yaml
 
+from .adapters.agent import AgentTarget
 from .diff import GatePolicy
+from .providers import from_config as model_from_config
 
 DEFAULT_CONFIG = Path("driftguard.yaml")
 
@@ -20,9 +22,31 @@ TEMPLATE = """\
 #   driftguard baseline    # record current posture, then COMMIT the baseline file
 #   driftguard check       # re-run and fail if anything got worse
 
-# Dotted path to a zero-arg factory returning a Target.
-# See examples/ for a runnable one.
-target: myapp.security_target:build
+# WHAT TO TEST. Pick one of the two:
+#
+# (a) models -- driftguard drives its own agent loop against each model.
+#     Works with any provider. Shorthand is "provider:model".
+models:
+  - openai:gpt-4o
+  # - anthropic:claude-sonnet-5
+  # - gemini:gemini-2.0-flash
+  # - groq:llama-3.3-70b-versatile
+  # - ollama:llama3.1                      # local, no API key
+  # - provider: openai_compat              # ANY /v1/chat/completions endpoint
+  #   model: my-model
+  #   base_url: http://my-gateway.internal/v1
+  #   api_key_env: MY_GATEWAY_KEY
+  # - provider: litellm                    # pip install 'driftguard[litellm]'
+  #   model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
+
+# Tools the agent is given. Defaults to a generic support-agent toolkit.
+# Point this at your own: "mypkg.tools:TOOLKIT" (a dict of name -> callable).
+# toolkit: mypkg.tools:TOOLKIT
+# system_prompt_file: prompts/system.txt
+
+# (b) target -- you already have an agent; keep your own loop in the test.
+#     Dotted path to a zero-arg factory returning a Target. See examples/.
+# target: myapp.security_target:build
 
 # Built-in attack packs. `driftguard packs` lists them.
 packs:
@@ -50,6 +74,11 @@ gate:
 @dataclass
 class Config:
     target: str = ""
+    models: list[Any] = field(default_factory=list)
+    toolkit: str = ""
+    system_prompt: str = ""
+    system_prompt_file: str = ""
+    max_steps: int = 8
     packs: list[str] = field(default_factory=list)
     corpus_dirs: list[str] = field(default_factory=list)
     samples: int = 20
@@ -65,7 +94,12 @@ class Config:
         data: dict[str, Any] = yaml.safe_load(path.read_text()) or {}
         g = data.get("gate") or {}
         return cls(
-            target=data.get("target", ""),
+            target=data.get("target") or "",
+            models=data.get("models") or [],
+            toolkit=data.get("toolkit", ""),
+            system_prompt=data.get("system_prompt", ""),
+            system_prompt_file=data.get("system_prompt_file", ""),
+            max_steps=int(data.get("max_steps", 8)),
             packs=data.get("packs") or [],
             corpus_dirs=data.get("corpus_dirs") or [],
             samples=int(data.get("samples", 20)),
@@ -80,13 +114,65 @@ class Config:
             ),
         )
 
-    def build_target(self) -> Any:
-        """Import `module.path:factory` and call it."""
-        if ":" not in self.target:
+    # -- building targets ---------------------------------------------------
+
+    def _resolve(self, dotted: str) -> Any:
+        if ":" not in dotted:
+            raise ValueError(f"expected 'module.path:attr', got {dotted!r}")
+        mod_name, attr = dotted.split(":", 1)
+        return getattr(importlib.import_module(mod_name), attr)
+
+    def resolve_toolkit(self) -> tuple[dict, str]:
+        """Return (tools, system_prompt), defaulting to the built-in toolkit."""
+        from . import defaults
+
+        tools = self._resolve(self.toolkit) if self.toolkit else defaults.TOOLKIT
+        if self.system_prompt_file:
+            prompt = Path(self.system_prompt_file).read_text()
+        elif self.system_prompt:
+            prompt = self.system_prompt
+        elif self.toolkit:
+            # Custom tools with the built-in prompt would test a system that
+            # does not exist; make the user supply one.
             raise ValueError(
-                f"target must be 'module.path:factory', got {self.target!r}"
+                "a custom `toolkit` needs a matching `system_prompt` or "
+                "`system_prompt_file` -- the prompt is part of what is tested"
             )
-        mod_name, fn_name = self.target.split(":", 1)
-        mod = importlib.import_module(mod_name)
-        factory = getattr(mod, fn_name)
-        return factory()
+        else:
+            prompt = defaults.SYSTEM_PROMPT
+        return tools, prompt
+
+    def build_targets(self, model_override: list[str] | None = None) -> list[Any]:
+        """Build every target this config describes.
+
+        `target` (your own agent) wins when both are set, because a real agent
+        is a strictly better test subject than driftguard's generic loop.
+        """
+        if self.target and not model_override:
+            return [self._resolve(self.target)()]
+
+        specs = model_override or self.models
+        if not specs:
+            raise ValueError(
+                "nothing to test: set `models:` or `target:` in driftguard.yaml, "
+                "or pass --model"
+            )
+        tools, prompt = self.resolve_toolkit()
+        return [
+            AgentTarget(
+                model_from_config(spec),
+                tools=tools,
+                system_prompt=prompt,
+                max_steps=self.max_steps,
+            )
+            for spec in specs
+        ]
+
+    def build_target(self, model_override: list[str] | None = None) -> Any:
+        targets = self.build_targets(model_override)
+        if len(targets) > 1:
+            raise ValueError(
+                f"{len(targets)} models configured; this command takes one. "
+                f"Use --model to pick, or `driftguard compare` for a matrix."
+            )
+        return targets[0]

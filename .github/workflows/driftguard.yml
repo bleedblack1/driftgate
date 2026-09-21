@@ -22,7 +22,8 @@ jobs:
 
       - name: Check for security regressions
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # whichever provider your driftguard.yaml uses
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: driftguard check --markdown driftguard-report.md
 
       # Post the table even when the gate fails, so reviewers see why.
