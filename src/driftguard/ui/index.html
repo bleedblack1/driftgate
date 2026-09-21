@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>driftguard</title>
+<style>
+:root{
+  --bg:#fbfbfa; --panel:#fff; --line:#e4e4e1; --ink:#1a1a18; --dim:#6b6b66;
+  --accent:#2f5fd0; --ok:#1a7f4b; --warn:#a86a00; --bad:#c0392b;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#141416; --panel:#1c1c1f; --line:#2e2e33; --ink:#e8e8e6; --dim:#9a9a94;
+  --accent:#7ea2f5; --ok:#4fbe85; --warn:#d99a2b; --bad:#f0736a;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans);}
+.wrap{max-width:1080px;margin:0 auto;padding:24px 16px 80px}
+header{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+h1{font-size:20px;margin:0;letter-spacing:-.01em}
+h1 b{font-weight:650}
+.sub{color:var(--dim);font-size:13px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin:16px 0}
+.card h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:0 0 14px}
+label{display:block;font-size:13px;color:var(--dim);margin-bottom:6px}
+input[type=text],select{width:100%;padding:9px 11px;border:1px solid var(--line);border-radius:7px;
+  background:var(--bg);color:var(--ink);font:13px/1.4 var(--mono)}
+input[type=range]{width:100%}
+button{font:inherit;font-size:14px;padding:9px 16px;border-radius:7px;border:1px solid var(--line);
+  background:var(--panel);color:var(--ink);cursor:pointer}
+button:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:550}
+button.primary:disabled{opacity:.5;cursor:not-allowed}
+button.sm{padding:5px 10px;font-size:12px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+.row>*{flex:1;min-width:180px}
+.chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px}
+.chip{display:inline-flex;align-items:center;gap:7px;background:var(--bg);border:1px solid var(--line);
+  border-radius:20px;padding:4px 7px 4px 12px;font:12px var(--mono)}
+.chip button{border:0;background:none;padding:0 4px;color:var(--dim);font-size:15px;line-height:1}
+.presets{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+.presets button{font:11px var(--mono);padding:4px 9px;color:var(--dim)}
+.packs{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px}
+.pack{display:flex;gap:9px;align-items:flex-start;padding:10px;border:1px solid var(--line);
+  border-radius:8px;cursor:pointer;background:var(--bg)}
+.pack input{margin-top:3px}
+.pack small{display:block;color:var(--dim);font-size:11px}
+.bar{height:5px;background:var(--line);border-radius:3px;overflow:hidden;margin:10px 0}
+.bar div{height:100%;background:var(--accent);transition:width .25s}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.metric{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:12px}
+.metric .k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.05em}
+.metric .v{font-size:24px;font-weight:600;letter-spacing:-.02em;margin-top:3px}
+.metric .n{font-size:11px;color:var(--dim);font-family:var(--mono)}
+.ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);
+  font-weight:500;padding:6px 8px;border-bottom:1px solid var(--line)}
+td{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.case{cursor:pointer}
+tr.case:hover td{background:var(--bg)}
+.mono{font-family:var(--mono);font-size:12px}
+.pill{display:inline-block;padding:1px 7px;border-radius:10px;font:11px var(--mono);border:1px solid var(--line)}
+.pill.critical{color:var(--bad);border-color:var(--bad)}
+.pill.high{color:var(--warn);border-color:var(--warn)}
+.pill.benign{color:var(--accent);border-color:var(--accent)}
+.banner{padding:13px 16px;border-radius:9px;margin:16px 0;border:1px solid}
+.banner.pass{border-color:var(--ok);color:var(--ok)}
+.banner.fail{border-color:var(--bad);color:var(--bad)}
+.banner b{display:block;font-size:15px;margin-bottom:2px}
+.banner span{color:var(--dim);font-size:13px}
+dialog{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--ink);
+  max-width:760px;width:calc(100% - 32px);padding:0}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dh{padding:16px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:12px}
+.db{padding:18px 20px;max-height:66vh;overflow:auto}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:7px;padding:11px;
+  font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-word;margin:6px 0 14px;overflow-x:auto}
+.step{border-left:2px solid var(--line);padding:2px 0 2px 13px;margin:7px 0}
+.step.violation{border-color:var(--bad)}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);margin-top:14px}
+.hbar{display:inline-block;height:7px;background:var(--accent);border-radius:2px;vertical-align:middle}
+.empty{color:var(--dim);text-align:center;padding:36px 12px;font-size:14px}
+.err{color:var(--bad);font-family:var(--mono);font-size:12px}
+.hint{color:var(--dim);font-size:12px;margin-top:10px}
+@media(max-width:640px){.row>*{min-width:100%}.wrap{padding:16px 12px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><b>driftguard</b></h1>
+    <span class="sub">security regression gate for LLM agents</span>
+  </header>
+  <p class="sub" id="ctx"></p>
+
+  <div class="card" id="setup">
+    <h2>What to test</h2>
+    <div class="row">
+      <div style="flex:2">
+        <label for="model">Model (provider:model)</label>
+        <input type="text" id="model" placeholder="openai:gpt-4o" autocomplete="off">
+        <div class="presets" id="presets"></div>
+      </div>
+      <div style="flex:0 0 auto;min-width:auto">
+        <button id="addModel">Add</button>
+      </div>
+    </div>
+    <div class="chips" id="chips"></div>
+
+    <div class="lbl" style="margin-bottom:8px">Attack packs</div>
+    <div class="packs" id="packs"></div>
+
+    <div class="row" style="margin-top:18px;align-items:center">
+      <div>
+        <label for="samples">Samples per case: <b id="nlab">10</b></label>
+        <input type="range" id="samples" min="1" max="50" value="10">
+      </div>
+      <div style="flex:0 0 auto;min-width:auto">
+        <button class="primary" id="run">Run</button>
+      </div>
+    </div>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <div class="card" id="progress" hidden>
+    <h2>Running</h2>
+    <div class="bar"><div id="pbar" style="width:0%"></div></div>
+    <span class="sub mono" id="pstat"></span>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<dialog id="drawer">
+  <div class="dh">
+    <div><b id="dtitle"></b><div class="sub mono" id="dmeta"></div></div>
+    <button class="sm" onclick="drawer.close()">Close</button>
+  </div>
+  <div class="db" id="dbody"></div>
+</dialog>
+
+<script>
+const TOKEN = "__TOKEN__";
+const api = async (p, opts={}) => {
+  const r = await fetch(p, {...opts, headers:{"Content-Type":"application/json","X-Driftguard-Token":TOKEN}});
+  if(!r.ok) throw new Error((await r.json().catch(()=>({}))).error || r.statusText);
+  return r.json();
+};
+const $ = s => document.querySelector(s);
+const esc = s => String(s??"").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const pct = v => (v*100).toFixed(v<0.1&&v>0?1:0)+"%";
+const band = v => v>=.3?"bad":v>0?"warn":"ok";
+
+let models=[], state=null, runId=null, lastRun=null;
+
+const PRESETS=["openai:gpt-4o","anthropic:claude-sonnet-5","gemini:gemini-2.0-flash",
+  "groq:llama-3.3-70b-versatile","ollama:llama3.1","deepseek:deepseek-chat"];
+
+function renderChips(){
+  $("#chips").innerHTML = models.map((m,i)=>
+    `<span class="chip">${esc(m)}<button data-i="${i}" title="remove">&times;</button></span>`).join("");
+  $("#chips").querySelectorAll("button").forEach(b=>b.onclick=()=>{models.splice(+b.dataset.i,1);renderChips();syncRun();});
+  syncRun();
+}
+function syncRun(){
+  const usingTarget = state?.has_target && models.length===0;
+  $("#run").disabled = models.length===0 && !usingTarget;
+  $("#hint").textContent = usingTarget
+    ? "No model added: will use the `target` from driftguard.yaml (your own agent)."
+    : models.length===0 ? "Add at least one model, or configure a target in driftguard.yaml."
+    : models.length>1 ? `Comparing ${models.length} models on the same corpus.` : "";
+}
+function addModel(v){ v=(v||$("#model").value).trim(); if(!v||models.includes(v))return;
+  models.push(v); $("#model").value=""; renderChips(); }
+
+async function boot(){
+  state = await api("/api/state?token="+TOKEN);
+  $("#ctx").textContent =
+    `${state.has_config?"driftguard.yaml loaded":"no config file (defaults in use)"} · `+
+    `${state.has_baseline?"baseline present, gate verdict will be shown":"no baseline yet"} · `+
+    `${state.cache_entries} cached responses`;
+  $("#presets").innerHTML = PRESETS.map(p=>`<button data-m="${p}">${p}</button>`).join("");
+  $("#presets").querySelectorAll("button").forEach(b=>b.onclick=()=>addModel(b.dataset.m));
+  $("#packs").innerHTML = state.packs.map(p=>`
+    <label class="pack"><input type="checkbox" value="${p.name}" checked>
+      <span><b>${p.name}</b><small>${p.count} cases${p.kind==="benign"?" · utility control":""}</small></span>
+    </label>`).join("");
+  (state.configured_models||[]).forEach(addModel);
+  $("#samples").value = Math.min(state.samples||10, 50);
+  $("#nlab").textContent = $("#samples").value;
+  renderChips();
+}
+
+$("#addModel").onclick = ()=>addModel();
+$("#model").addEventListener("keydown", e=>{ if(e.key==="Enter") addModel(); });
+$("#samples").oninput = e => $("#nlab").textContent = e.target.value;
+
+$("#run").onclick = async ()=>{
+  const packs=[...document.querySelectorAll("#packs input:checked")].map(i=>i.value);
+  if(!packs.length){ $("#hint").textContent="Select at least one pack."; return; }
+  $("#run").disabled=true; $("#out").innerHTML=""; $("#progress").hidden=false;
+  try{
+    runId = (await api("/api/run",{method:"POST",body:JSON.stringify({models,packs,samples:+$("#samples").value})})).id;
+    poll();
+  }catch(e){ $("#progress").hidden=true; $("#out").innerHTML=`<div class="card err">${esc(e.message)}</div>`; $("#run").disabled=false; }
+};
+
+async function poll(){
+  const r = await api(`/api/run/${runId}`);
+  const p = r.total ? Math.round(r.done/r.total*100) : 0;
+  $("#pbar").style.width = p+"%";
+  $("#pstat").textContent = `${r.done}/${r.total} cases  ${r.current||""}`;
+  if(r.status==="running"){ setTimeout(poll, 400); return; }
+  $("#progress").hidden=true; $("#run").disabled=false;
+  if(r.status==="error"){ $("#out").innerHTML=`<div class="card"><h2>Run failed</h2><pre class="err">${esc(r.error)}</pre></div>`; return; }
+  lastRun=r; render(r);
+}
+
+function metricCards(m){
+  const c=[
+    ["attack success", pct(m.asr), `${m.attack_successes}/${m.attack_samples} · CI ${pct(m.asr_ci[0])}-${pct(m.asr_ci[1])}`, band(m.asr)],
+    ["weighted risk", m.weighted_risk.toFixed(1), "severity-weighted /100", band(m.weighted_risk/100)],
+    ["critical breaches", m.critical_failures, `${m.cases_ever_breached}/${m.attack_cases} cases breached`, m.critical_failures?"bad":"ok"],
+  ];
+  if(m.benign_samples){
+    c.push(["benign success", pct(m.utility), "legitimate work completed", m.utility>=.9?"ok":m.utility>=.7?"warn":"bad"]);
+    c.push(["over-refusal", pct(m.over_refusal_rate), "refused harmless requests", m.over_refusal_rate>.1?"bad":"ok"]);
+    c.push(["safety / utility", m.safety_utility.toFixed(2), "combined, /1.00", m.safety_utility>=.9?"ok":"warn"]);
+  }
+  return `<div class="cards">${c.map(([k,v,n,cl])=>
+    `<div class="metric"><div class="k">${k}</div><div class="v ${cl}">${v}</div><div class="n">${n}</div></div>`).join("")}</div>`
+  + (m.benign_samples?"":`<p class="hint warn">No benign pack selected. A 0% attack rate may just mean the agent
+     refuses everything — include the benign pack to tell the two apart.</p>`);
+}
+
+function breakdowns(m){
+  const bars = a => a.map(b=>{const r=b.samples?b.successes/b.samples:0;
+    return `<tr><td class="mono">${b.label}</td><td class="mono">${b.successes}/${b.samples}</td>
+      <td><span class="hbar" style="width:${Math.round(r*120)}px;background:var(--${band(r)==='ok'?'ok':band(r)==='warn'?'warn':'bad'})"></span></td></tr>`}).join("");
+  const fm = Object.entries(m.failure_modes||{}).sort((a,b)=>b[1]-a[1]);
+  return `<div class="card"><h2>Where the risk is</h2>
+    <div class="row" style="align-items:flex-start">
+      <div><div class="lbl" style="margin-top:0">by pack</div><table>${bars(m.by_pack)}</table></div>
+      <div><div class="lbl" style="margin-top:0">by severity</div><table>${bars(m.by_severity)}</table></div>
+    </div>
+    ${fm.length?`<div class="lbl">failure modes</div><p class="mono">${fm.map(([k,v])=>`${k} ×${v}`).join("  ·  ")}</p>
+      <p class="hint">Which defense is missing: <code>forbidden_tool</code> points at authorization,
+      <code>canary</code> at egress. Those are different fixes.</p>`:""}
+    <p class="hint mono">latency p50 ${m.p50_ms.toFixed(0)}ms / p95 ${m.p95_ms.toFixed(0)}ms ·
+      ${m.tokens.toLocaleString()} tokens · ~$${m.est_cost_usd.toFixed(3)} ·
+      ${m.mean_tool_calls.toFixed(1)} tool calls/sample${m.harness_errors?` · <span class="bad">${m.harness_errors} harness errors</span>`:""}</p>
+  </div>`;
+}
+
+function caseTable(model, cases){
+  const rows = cases.slice().sort((a,b)=> (a.kind===b.kind? b.rate-a.rate : a.kind<b.kind?-1:1)).map(c=>`
+    <tr class="case" data-m="${esc(model)}" data-c="${esc(c.id)}">
+      <td class="mono">${c.id}</td>
+      <td><span class="pill ${c.kind==='benign'?'benign':c.severity}">${c.kind==='benign'?'benign':c.severity}</span></td>
+      <td class="mono ${band(c.rate)}">${c.successes}/${c.samples}</td>
+      <td>${esc(c.title)}<div class="sub" style="font-size:11px">${c.kind==='benign'?'task failures':'attack successes'} · ${c.channel}</div></td>
+    </tr>`).join("");
+  return `<div class="card"><h2>Cases — ${esc(model)}</h2>
+    <table><thead><tr><th>case</th><th></th><th>rate</th><th>title</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="hint">Click any row to see what the agent actually did.</p></div>`;
+}
+
+function matrix(r){
+  const names=r.models; if(names.length<2) return "";
+  const ids=r.results[names[0]].cases.map(c=>c.id);
+  const head=names.map(n=>`<th class="mono">${esc(n)}</th>`).join("");
+  const body=ids.map(id=>{
+    const cells=names.map(n=>{const c=r.results[n].cases.find(x=>x.id===id);
+      return `<td class="mono ${band(c.rate)}">${c.successes}/${c.samples}</td>`}).join("");
+    const c0=r.results[names[0]].cases.find(x=>x.id===id);
+    return `<tr><td class="mono">${id}</td><td><span class="pill ${c0.kind==='benign'?'benign':c0.severity}">${c0.kind==='benign'?'benign':c0.severity}</span></td>${cells}</tr>`;
+  }).join("");
+  const mrow=(label,f,fmt)=>`<tr><td colspan="2"><b>${label}</b></td>`+
+    names.map(n=>`<td class="mono">${fmt(f(r.results[n].metrics))}</td>`).join("")+`</tr>`;
+  return `<div class="card"><h2>Model comparison</h2>
+    <table><thead><tr><th>case</th><th></th>${head}</tr></thead><tbody>${body}
+      ${mrow("attack success",m=>m.asr,pct)}
+      ${mrow("weighted risk",m=>m.weighted_risk,v=>v.toFixed(0))}
+      ${mrow("benign success",m=>m.utility,pct)}
+      ${mrow("safety / utility",m=>m.safety_utility,v=>v.toFixed(2))}
+    </tbody></table>
+    <p class="hint">These numbers describe <b>your</b> tools and prompt. They do not transfer to another agent.</p></div>`;
+}
+
+function gate(d){
+  if(!d) return "";
+  const parts=[d.security?`${d.security} security`:null,d.utility?`${d.utility} utility`:null].filter(Boolean);
+  const rows=d.cases.filter(c=>c.verdict!=="unchanged").map(c=>
+    `<tr><td class="mono">${c.id}</td><td class="mono">${c.base}</td><td class="mono">${c.now}</td>
+     <td class="mono">${c.q<1?c.q.toFixed(3):"-"}</td><td class="${c.verdict==='regressed'?'bad':c.verdict==='improved'?'ok':''}">${c.verdict}</td>
+     <td class="sub">${esc(c.reason)}</td></tr>`).join("");
+  return `<div class="banner ${d.passed?'pass':'fail'}">
+      <b>${d.passed?"PASS — no regressions against the baseline":"FAIL — "+parts.join(" + ")+" regression(s)"}</b>
+      <span>${d.utility&&!d.security?"Nothing got less safe — the agent got less useful. Refusing legitimate work is a regression too.":"Compared against .driftguard-baseline.json"}</span>
+    </div>
+    ${rows?`<div class="card"><h2>Changes vs baseline</h2><table>
+      <thead><tr><th>case</th><th>baseline</th><th>now</th><th>q</th><th>verdict</th><th>reason</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+      ${d.advisories.length?`<div class="lbl">under-powered</div>${d.advisories.map(a=>`<p class="hint">${esc(a)}</p>`).join("")}`:""}
+    </div>`:""}`;
+}
+
+function render(r){
+  const first=r.models[0]; if(!first){ $("#out").innerHTML=`<div class="empty">No results.</div>`; return; }
+  const m=r.results[first].metrics;
+  const saved=r.stats?.cache_hits? `<p class="hint mono">cache: ${r.stats.cache_hits} hits, ~$${(r.stats.cache_saved||0).toFixed(3)} saved</p>`:"";
+  $("#out").innerHTML =
+      gate(r.diff)
+    + `<div class="card"><h2>Metrics — ${esc(first)}</h2>${metricCards(m)}${saved}</div>`
+    + matrix(r)
+    + breakdowns(m)
+    + r.models.map(n=>caseTable(n,r.results[n].cases)).join("")
+    + `<div class="card"><h2>Next</h2>
+        <div class="row">
+          <div style="flex:0 0 auto;min-width:auto"><button id="save">Save as baseline</button></div>
+          <div style="flex:0 0 auto;min-width:auto"><button id="copy" class="sm">Copy CI snippet</button></div>
+        </div>
+        <p class="hint">Saving writes <code>.driftguard-baseline.json</code>. Commit it — future runs
+        are compared against it, and the file is the audit trail of when your posture moved.</p>
+        <span id="saved" class="hint ok"></span></div>`;
+
+  document.querySelectorAll("tr.case").forEach(tr=>tr.onclick=()=>showCase(tr.dataset.m,tr.dataset.c));
+  const sb=$("#save"); if(sb) sb.onclick=async()=>{
+    try{ const res=await api("/api/baseline",{method:"POST",body:JSON.stringify({run_id:runId,model:first})});
+      $("#saved").textContent=`Written to ${res.path}. Commit it.`;
+    }catch(e){ $("#saved").className="hint err"; $("#saved").textContent=e.message; }};
+  const cb=$("#copy"); if(cb) cb.onclick=()=>{
+    navigator.clipboard?.writeText("- run: pip install driftguard\n- run: driftguard check --markdown report.md");
+    cb.textContent="Copied"; setTimeout(()=>cb.textContent="Copy CI snippet",1500); };
+}
+
+function showCase(model,id){
+  const c=lastRun.results[model].cases.find(x=>x.id===id);
+  $("#dtitle").textContent=`${c.id} — ${c.title}`;
+  $("#dmeta").textContent=`${c.pack} · ${c.kind} · ${c.severity} · ${c.successes}/${c.samples} · channel: ${c.channel}${c.inject_tool?" via "+c.inject_tool:""}`;
+  let h=`<div class="lbl" style="margin-top:0">User prompt</div><pre>${esc(c.prompt)}</pre>`;
+  if(c.payload) h+=`<div class="lbl">Injected payload (${c.channel})</div><pre>${esc(c.payload)}</pre>`;
+  h+=`<div class="lbl">Expected</div><p class="mono">${c.expects.join(", ")}</p>`;
+  if(!c.examples.length){
+    h+=`<p class="hint ok">No violations recorded in ${c.samples} samples.</p>`;
+  }else{
+    h+=`<div class="lbl">What the agent did (${c.examples.length} failing sample${c.examples.length>1?"s":""} shown)</div>`;
+    c.examples.forEach((ex,i)=>{
+      h+=`<div class="step ${ex.assertions.some(a=>!a.passed)?"violation":""}">
+        <div class="sub mono">sample ${i+1} · ${ex.steps} model step(s)</div>`;
+      h+= ex.tool_calls.length
+        ? `<div class="lbl">tool calls</div>`+ex.tool_calls.map(t=>`<pre>${esc(t.name)}(${esc(t.args)})${t.error?"  → "+esc(t.error):""}</pre>`).join("")
+        : `<p class="hint">no tool calls</p>`;
+      if(ex.egress.length) h+=`<div class="lbl">outbound requests</div>`+ex.egress.map(e=>`<pre>${esc(e.url)}</pre>`).join("");
+      h+=`<div class="lbl">final answer</div><pre>${esc(ex.output)||"<em>empty</em>"}</pre>`;
+      h+=`<div class="lbl">assertions</div>`+ex.assertions.map(a=>
+        `<p class="mono ${a.passed?'ok':'bad'}">${a.passed?"pass":"FAIL"} · ${esc(a.name)} — ${esc(a.detail)}</p>`).join("");
+      h+=`</div>`;
+    });
+  }
+  $("#dbody").innerHTML=h; drawer.showModal();
+}
+
+boot().catch(e=>{ $("#ctx").innerHTML=`<span class="err">${esc(e.message)}</span>`; });
+</script>
+</body>
+</html>

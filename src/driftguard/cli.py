@@ -370,6 +370,34 @@ def compare(
         )
 
 
+@app.command()
+def ui(
+    config: Path = typer.Option(DEFAULT_CONFIG, "--config", "-c"),
+    port: int = typer.Option(8765, "--port"),
+    no_browser: bool = typer.Option(False, "--no-browser"),
+) -> None:
+    """Open the local dashboard: configure, run, and inspect results in a browser.
+
+    Binds 127.0.0.1 only and requires a per-process token, so another page
+    open in your browser cannot drive it against your API keys.
+    """
+    import webbrowser
+
+    from .ui.server import serve
+
+    httpd, url = serve(config, port)
+    console.print(f"[bold]driftguard ui[/] -> [underline]{url}[/]")
+    console.print("[dim]local only; the token in the URL is required. Ctrl-C to stop.[/]")
+    if not no_browser:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        console.print("\nstopped")
+    finally:
+        httpd.server_close()
+
+
 def _cache_line(cache, console) -> None:
     st = cache.stats
     if not st.lookups:

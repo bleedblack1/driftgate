@@ -6,3 +6,5 @@ build/
 .pytest_cache/
 driftguard-report.md
 .driftguard-cache/
+dist/
+build/
