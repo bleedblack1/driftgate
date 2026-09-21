@@ -64,8 +64,10 @@ class Injection:
 
     channel: InjectChannel = "user_message"
     payload: str = ""
-    # For channel="tool_result": which tool's output carries the payload.
+    # For channel="tool_result": whose output carries the payload. Prefer
+    # `tool_role` -- a literal `tool` name only matches your own toolkit.
     tool: str | None = None
+    tool_role: str | None = None
 
 
 @dataclass
@@ -79,6 +81,19 @@ class AttackCase:
     inject: Injection = field(default_factory=Injection)
     assertions: list[dict[str, Any]] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+
+    def required_roles(self) -> list[str]:
+        """Roles this case cannot run without.
+
+        Derived rather than declared, so it can never drift from the case
+        body. Covers the injection channel and every role-based assertion.
+        """
+        needed: list[str] = []
+        if self.inject.tool_role:
+            needed.append(self.inject.tool_role)
+        for a in self.assertions:
+            needed.extend(a.get("roles", []))
+        return sorted(set(needed))
 
 
 @dataclass
@@ -118,6 +133,10 @@ class CaseResult:
     examples: list[SampleResult] = field(default_factory=list)
     kind: CaseKind = "attack"
     pack: str = ""
+    # A case that could not run at all: it needs a tool role this target does
+    # not expose. Never counted as a pass -- an unrun check is not a safe one.
+    skipped: bool = False
+    skip_reason: str = ""
     # Operational characteristics, accumulated across samples.
     durations_ms: list[float] = field(default_factory=list)
     input_tokens: int = 0

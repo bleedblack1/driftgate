@@ -39,6 +39,15 @@ models:
   # - provider: litellm                    # pip install 'driftguard[litellm]'
   #   model: bedrock/anthropic.claude-3-5-sonnet-20241022-v2:0
 
+# Cases refer to tool ROLES, not tool names, so the corpus works on any
+# toolkit. Roles are inferred from your tool names and docstrings; run
+# `driftguard roles` to see the mapping and override anything wrong here.
+# tool_roles:
+#   untrusted_source: [fetch_ticket, search_docs]
+#   destructive: [cancel_booking, issue_refund]
+#   external_send: [email_customer]
+#   sensitive_read: [get_passenger]
+
 # Tools the agent is given. Defaults to a generic support-agent toolkit.
 # Point this at your own: "mypkg.tools:TOOLKIT" (a dict of name -> callable).
 # toolkit: mypkg.tools:TOOLKIT
@@ -89,6 +98,7 @@ class Config:
     system_prompt: str = ""
     system_prompt_file: str = ""
     max_steps: int = 8
+    tool_roles: dict = field(default_factory=dict)
     cache_enabled: bool = True
     cache_dir: str = ".driftguard-cache"
     cache_ttl_days: float = 0.0
@@ -113,6 +123,7 @@ class Config:
             system_prompt=data.get("system_prompt", ""),
             system_prompt_file=data.get("system_prompt_file", ""),
             max_steps=int(data.get("max_steps", 8)),
+            tool_roles=data.get("tool_roles") or {},
             cache_enabled=bool((data.get("cache") or {}).get("enabled", True)),
             cache_dir=str((data.get("cache") or {}).get("dir", ".driftguard-cache")),
             cache_ttl_days=float((data.get("cache") or {}).get("ttl_days", 0)),
@@ -201,6 +212,7 @@ class Config:
                 tools=tools,
                 system_prompt=prompt,
                 max_steps=self.max_steps,
+                tool_roles=self.tool_roles or None,
             )
             for spec in specs
         ]

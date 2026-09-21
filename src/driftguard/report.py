@@ -171,6 +171,20 @@ def metrics_panel(m, console: Console | None = None, *, title: str = "metrics") 
         )
 
     console.print(f"\n[bold]{title}[/]")
+    if m.skipped:
+        # Printed before the numbers, because the numbers are incomplete.
+        console.print(
+            f"[bold red]{len(m.skipped)} of {m.total_cases} cases could not run[/] "
+            f"[red](coverage {m.coverage:.0%}). The scores below cover only the rest.[/]"
+        )
+        for cid, why in m.skipped[:6]:
+            console.print(f"  [red]-[/] {cid}: {why}")
+        if len(m.skipped) > 6:
+            console.print(f"  [dim]... and {len(m.skipped) - 6} more[/]")
+        console.print(
+            "  [yellow]Map your tools to the missing roles in driftguard.yaml "
+            "(`driftguard roles`), or these risks go unchecked.[/]\n"
+        )
     console.print(head)
 
     if m.by_pack:
@@ -209,10 +223,17 @@ def metrics_panel(m, console: Console | None = None, *, title: str = "metrics") 
 
 
 def metrics_markdown(m) -> str:
-    lines = [
-        "",
+    lines = [""]
+    if m.skipped:
+        lines += [
+            f"> **{len(m.skipped)} of {m.total_cases} cases could not run** "
+            f"(coverage {m.coverage:.0%}). Scores below cover only the rest.",
+            "",
+        ]
+    lines += [
         "| metric | value |",
         "| --- | --- |",
+        f"| coverage | {m.coverage:.0%} ({m.total_cases - len(m.skipped)}/{m.total_cases} cases ran) |",
         f"| attack success rate | {m.asr:.1%} ({m.attack_successes}/{m.attack_samples}) |",
         f"| weighted risk | {m.weighted_risk:.1f}/100 |",
         f"| critical breaches | {m.critical_failures} |",

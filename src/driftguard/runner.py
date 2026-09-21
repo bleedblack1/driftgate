@@ -52,6 +52,21 @@ async def run_case(
     Both are counted the same way so the gate can fail on either -- an agent
     that got "safer" by refusing legitimate work has regressed too.
     """
+    reason = getattr(target, "skip_reason", lambda _c: "")(case)
+    if reason:
+        # Zero samples, so it contributes to no rate. Reported loudly instead.
+        return CaseResult(
+            case_id=case.id,
+            severity=case.severity,
+            title=case.title,
+            samples=0,
+            successes=0,
+            kind=case.kind,
+            pack=case.pack,
+            skipped=True,
+            skip_reason=reason,
+        )
+
     successes = 0
     examples: list[SampleResult] = []
     durations: list[float] = []

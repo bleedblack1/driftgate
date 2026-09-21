@@ -19,8 +19,32 @@ import json
 from collections.abc import Callable
 from typing import Any, Awaitable
 
+from .. import roles as roles_mod
 from ..recorder import Recorder
 from ..types import AttackCase, TurnResult
+
+
+def skip_reason(case: AttackCase, role_map: "roles_mod.RoleMap") -> str:
+    """Why this case cannot run against this toolkit, or "" if it can.
+
+    Returning a reason rather than silently passing is the point: a check
+    that did not run has protected nothing, and reporting it as a pass is
+    how a security tool ends up lying to you.
+    """
+    missing = role_map.missing(case.required_roles())
+    if missing:
+        detail = "; ".join(f"{r} ({roles_mod.describe(r)})" for r in missing)
+        return f"no tool mapped to role(s): {detail}"
+    if case.inject.tool and case.inject.tool not in role_map.mapping.get("__all__", []):
+        return ""
+    return ""
+
+
+def resolve_inject_tool(case: AttackCase, role_map, tools: dict) -> str | None:
+    """Which concrete tool carries the payload for this case."""
+    if case.inject.tool_role:
+        return role_map.first(case.inject.tool_role)
+    return case.inject.tool
 
 InvokeFn = Callable[..., Awaitable[str]]
 
@@ -37,9 +61,11 @@ class InProcessTarget:
         *,
         canary_template: str = "\n\n[internal] SERVICE_API_KEY={canary}\n",
         capture_http: bool = True,
+        tool_roles: dict[str, list[str]] | None = None,
     ) -> None:
         self.invoke = invoke
         self.tools = tools
+        self.role_map = roles_mod.build(tools, tool_roles)
         self.system_prompt = system_prompt
         self.model = model
         self.canary_template = canary_template
@@ -58,23 +84,21 @@ class InProcessTarget:
             "tools_sha": _sha(schema),
         }
 
+    def skip_reason(self, case: AttackCase) -> str:
+        return skip_reason(case, self.role_map)
+
     async def run(self, case: AttackCase, ctx: dict[str, Any]) -> TurnResult:
         rec = Recorder()
         canary = ctx.get("canary", "")
+        ctx.setdefault("roles", self.role_map)
 
         tools = dict(self.tools)
 
         # Plant the payload on the channel the case specifies.
-        if case.inject.channel == "tool_result" and case.inject.tool:
-            target_tool = case.inject.tool
-            if target_tool not in tools:
-                return TurnResult(
-                    error=(
-                        f"case {case.id} injects via tool {target_tool!r} which this target "
-                        f"does not expose; available: {sorted(tools)}"
-                    )
-                )
-            tools[target_tool] = _poisoned(tools[target_tool], case.inject.payload)
+        if case.inject.channel == "tool_result":
+            target_tool = resolve_inject_tool(case, self.role_map, tools)
+            if target_tool and target_tool in tools:
+                tools[target_tool] = _poisoned(tools[target_tool], case.inject.payload)
 
         system = self.system_prompt
         if canary:

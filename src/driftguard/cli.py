@@ -138,6 +138,7 @@ def check(
     model: list[str] = typer.Option(None, "--model", "-m", help="override configured model(s)"),
     no_cache: bool = typer.Option(False, "--no-cache", help="force live calls, ignore the cache"),
     refresh_cache: bool = typer.Option(False, "--refresh-cache", help="re-call and overwrite cached entries"),
+    allow_skipped: bool = typer.Option(False, "--allow-skipped", help="pass even if some cases cannot run"),
     markdown: Path = typer.Option(None, "--markdown", help="also write a PR-comment file"),
 ) -> None:
     """Re-run the corpus and fail (exit 1) if security got worse."""
@@ -166,6 +167,19 @@ def check(
     if markdown:
         markdown.write_text(to_markdown(report) + metrics_markdown(m))
         console.print(f"[dim]wrote {markdown}[/]")
+
+    # A gate that could not run part of itself is not a green gate.
+    blocked = report.skipped
+    if blocked and not allow_skipped:
+        console.print(
+            f"\n[bold red]FAIL[/] {len(blocked)} case(s) could not run, so this gate "
+            f"did not check what it claims to."
+        )
+        console.print(
+            "[yellow]Fix the tool-role mapping (`driftguard roles`), or pass "
+            "--allow-skipped to accept the gap.[/]"
+        )
+        raise typer.Exit(1)
 
     raise typer.Exit(0 if report.passed else 1)
 
@@ -367,6 +381,63 @@ def compare(
         console.print(
             "[yellow]No benign cases ran -- a low attack rate here might just mean "
             "the model refuses everything. Include the `benign` pack to tell them apart.[/]"
+        )
+
+
+@app.command()
+def roles(
+    config: Path = typer.Option(DEFAULT_CONFIG, "--config", "-c"),
+    model: list[str] = typer.Option(None, "--model", "-m"),
+) -> None:
+    """Show how your tools map to the roles the corpus refers to.
+
+    Cases name roles, not tool names, so the same corpus works on any agent.
+    Roles are inferred from your tool names and docstrings; anything wrong
+    here should be corrected with `tool_roles:` in driftguard.yaml.
+    """
+    from rich.table import Table
+
+    from . import roles as roles_mod
+
+    cfg = Config.load(config) if config.exists() else Config()
+    target = cfg.build_target(list(model) or None)
+    rm = getattr(target, "role_map", None)
+    if rm is None:
+        console.print("[yellow]this target does not expose a role map[/]")
+        raise typer.Exit(1)
+
+    t = Table(box=None, header_style="bold")
+    t.add_column("role")
+    t.add_column("your tools")
+    t.add_column("source")
+    for role in roles_mod.ROLES:
+        got = rm.tools(role)
+        src = "inferred" if role in rm.inferred else ("declared" if got else "")
+        t.add_row(
+            role,
+            ", ".join(got) if got else "[red]none[/]",
+            f"[dim]{src}[/]" if src else "",
+        )
+    console.print(t)
+
+    cases = corpus_mod.load(cfg.packs or None, [Path(d) for d in cfg.corpus_dirs])
+    blocked = [(c.id, target.skip_reason(c)) for c in cases]
+    blocked = [(i, r) for i, r in blocked if r]
+    if blocked:
+        console.print(
+            f"\n[red]{len(blocked)} of {len(cases)} cases cannot run[/] with this mapping:"
+        )
+        for cid, why in blocked:
+            console.print(f"  [red]-[/] {cid}: {why}")
+        console.print(
+            "\n[yellow]Add the missing roles under `tool_roles:` in driftguard.yaml.[/]"
+        )
+    else:
+        console.print(f"\n[green]all {len(cases)} cases can run[/]")
+    if rm.unmapped_tools:
+        console.print(
+            f"[dim]tools with no role: {', '.join(rm.unmapped_tools)} "
+            f"-- no case targets them[/]"
         )
 
 

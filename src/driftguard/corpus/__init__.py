@@ -42,6 +42,7 @@ def load_pack(path: Path) -> list[AttackCase]:
                     channel=inj.get("channel", "user_message"),
                     payload=inj.get("payload", ""),
                     tool=inj.get("tool"),
+                    tool_role=inj.get("tool_role"),
                 ),
                 assertions=raw.get("assertions", []),
                 tags=raw.get("tags", []),
@@ -75,5 +76,8 @@ def corpus_sha(cases: list[AttackCase]) -> str:
     """Content hash of the loaded corpus -- part of the baseline fingerprint."""
     h = hashlib.sha256()
     for c in sorted(cases, key=lambda c: c.id):
-        h.update(f"{c.id}|{c.kind}|{c.prompt}|{c.inject.payload}|{c.assertions}".encode())
+        h.update(
+            f"{c.id}|{c.kind}|{c.prompt}|{c.inject.payload}|"
+            f"{c.inject.tool_role}|{c.assertions}".encode()
+        )
     return h.hexdigest()[:16]

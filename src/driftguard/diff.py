@@ -14,7 +14,7 @@ from .stats import (
 )
 from .types import CaseResult
 
-Verdict = Literal["regressed", "improved", "unchanged", "new", "removed"]
+Verdict = Literal["regressed", "improved", "unchanged", "new", "removed", "skipped"]
 
 
 @dataclass
@@ -79,6 +79,10 @@ class DiffReport:
         return [c for c in self.regressions if c.kind == "attack"]
 
     @property
+    def skipped(self) -> list[CaseDiff]:
+        return [c for c in self.cases if c.verdict == "skipped"]
+
+    @property
     def utility_regressions(self) -> list[CaseDiff]:
         """Benign work the agent used to do and no longer does.
 
@@ -112,6 +116,30 @@ def compare(
 
     for case_id, r in sorted(by_id.items()):
         base = baseline.cases.get(case_id)
+
+        if r.skipped:
+            # Silently losing coverage is a regression: the check that used to
+            # protect you no longer runs, and nothing else would say so.
+            was_covered = bool(base and int(base.get("samples", 0)))
+            report.cases.append(
+                CaseDiff(
+                    case_id=case_id,
+                    title=r.title,
+                    severity=r.severity,
+                    kind=r.kind,
+                    verdict="regressed" if was_covered else "skipped",
+                    base_successes=int(base["successes"]) if was_covered else 0,
+                    base_samples=int(base["samples"]) if was_covered else 0,
+                    reason=(
+                        f"coverage lost: this case ran in the baseline and now cannot. "
+                        f"{r.skip_reason}"
+                        if was_covered
+                        else f"cannot run: {r.skip_reason}"
+                    ),
+                )
+            )
+            continue
+
         if base is None:
             report.cases.append(
                 CaseDiff(
