@@ -12,7 +12,7 @@ import urllib.request
 
 import pytest
 
-from driftguard.ui.server import serve
+from driftgate.ui.server import serve
 
 
 @pytest.fixture(scope="module")
@@ -28,7 +28,7 @@ def ui():
 def _get(base, path, token=None, origin=None):
     req = urllib.request.Request(base + path)
     if token:
-        req.add_header("X-Driftguard-Token", token)
+        req.add_header("X-Driftgate-Token", token)
     if origin:
         req.add_header("Origin", origin)
     return urllib.request.urlopen(req, timeout=5)
@@ -68,7 +68,7 @@ def test_index_requires_token_too(ui):
     with pytest.raises(urllib.error.HTTPError):
         _get(base, "/")
     body = _get(base, f"/?token={token}").read().decode()
-    assert "<title>driftguard</title>" in body
+    assert "<title>driftgate</title>" in body
     assert "__TOKEN__" not in body, "token placeholder was not substituted"
     assert token in body
 
@@ -92,7 +92,7 @@ def test_run_endpoint_executes_and_reports(ui):
         {"models": ["echo:mock"], "packs": ["tool_abuse"], "samples": 2}
     ).encode()
     req = urllib.request.Request(base + "/api/run", data=payload, method="POST")
-    req.add_header("X-Driftguard-Token", token)
+    req.add_header("X-Driftgate-Token", token)
     req.add_header("Content-Type", "application/json")
     run_id = json.loads(urllib.request.urlopen(req, timeout=5).read())["id"]
 
@@ -114,3 +114,37 @@ def test_unknown_run_is_404(ui):
     with pytest.raises(urllib.error.HTTPError) as e:
         _get(base, "/api/run/doesnotexist", token=token)
     assert e.value.code == 404
+
+
+# -- CLI smoke tests ---------------------------------------------------------
+#
+# Added after a clean-install check found that `demo` and `roles` both crashed
+# from a fresh environment while the whole unit suite was green. Every command
+# is now invoked the way a new user invokes it: no arguments, no config file.
+
+
+@pytest.mark.parametrize("args", [
+    ["--help"],
+    ["packs"],
+    ["demo", "-n", "4"],
+    ["roles"],
+    ["cache"],
+    ["scan", "--model", "echo:mock", "-n", "1"],
+])
+def test_command_runs_from_a_clean_directory(tmp_path, args):
+    """No config, no baseline, no source tree -- as installed from a wheel."""
+    import subprocess
+    import sys
+
+    r = subprocess.run(
+        [sys.executable, "-m", "driftgate.cli", *args],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    combined = r.stdout + r.stderr
+    for bad in ("Traceback", "KeyError", "TypeError", "AttributeError"):
+        assert bad not in combined, f"`{' '.join(args)}` crashed:\n{combined[-1500:]}"
+    # `demo` exits 1 by design when it catches the simulated regression.
+    assert r.returncode in (0, 1), combined[-800:]

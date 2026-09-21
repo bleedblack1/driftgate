@@ -1,6 +1,6 @@
 """Tool roles and coverage accounting.
 
-The bug these fix: the corpus used to name driftguard's own tools, so the
+The bug these fix: the corpus used to name driftgate's own tools, so the
 moment anyone supplied their own toolkit, cases errored out, benign cases
 demanded tools that did not exist, and the run still reported a confident
 0% attack rate. A wrong number that looks right is worse than an error.
@@ -10,17 +10,17 @@ import asyncio
 
 import pytest
 
-from driftguard import corpus
-from driftguard.adapters.agent import AgentTarget
-from driftguard.baseline import Baseline, Fingerprint
-from driftguard.diff import GatePolicy, compare
-from driftguard.metrics import compute
-from driftguard.providers import EchoModel
-from driftguard.roles import build, infer_role
-from driftguard.runner import run_corpus
+from driftgate import corpus
+from driftgate.adapters.agent import AgentTarget
+from driftgate.baseline import Baseline, Fingerprint
+from driftgate.diff import GatePolicy, compare
+from driftgate.metrics import compute
+from driftgate.providers import EchoModel
+from driftgate.roles import build, infer_role
+from driftgate.runner import run_corpus
 
 
-# A toolkit sharing no names with driftguard's built-in one.
+# A toolkit sharing no names with driftgate's built-in one.
 def search_flights(origin: str, destination: str) -> str:
     "Search for available flights."
     return "3 results"
@@ -125,7 +125,7 @@ def test_skipped_cases_excluded_from_rates():
 
 
 def test_coverage_is_surfaced_in_markdown():
-    from driftguard.report import metrics_markdown
+    from driftgate.report import metrics_markdown
 
     _, results = _run({"book_flight": book_flight})
     md = metrics_markdown(compute(results))
@@ -160,3 +160,23 @@ def test_never_baselined_skip_is_reported_but_not_a_failure():
     report = compare(Baseline(cases={}), after, GatePolicy())
     assert report.skipped
     assert not report.regressions
+
+
+def test_destructive_tools_never_hold_a_harmless_role():
+    """Regression: 'delete_user' matched readonly_status via 'ac-count-'.
+
+    A benign case requiring readonly_status would then have been satisfied by
+    the agent deleting a user.
+    """
+    from driftgate.defaults import TOOLKIT
+
+    rm = build(TOOLKIT)
+    for harmless in ("readonly_status", "benign_write"):
+        overlap = set(rm.tools(harmless)) & set(rm.tools("destructive"))
+        assert not overlap, f"{overlap} is both destructive and {harmless}"
+
+
+def test_substring_matches_do_not_leak_across_roles():
+    assert "readonly_status" not in infer_role("delete_account", lambda: None)
+    assert "readonly_status" not in infer_role("purge_records", lambda: None)
+    assert "readonly_status" in infer_role("check_status", lambda: None)

@@ -8,12 +8,12 @@ import asyncio
 
 import pytest
 
-from driftguard import corpus
-from driftguard.adapters.mock import MockTarget
-from driftguard.baseline import Baseline, Fingerprint
-from driftguard.diff import GatePolicy, compare
-from driftguard.runner import run_corpus
-from driftguard.stats import fisher_exact_greater, required_samples, wilson_interval
+from driftgate import corpus
+from driftgate.adapters.mock import MockTarget
+from driftgate.baseline import Baseline, Fingerprint
+from driftgate.diff import GatePolicy, compare
+from driftgate.runner import run_corpus
+from driftgate.stats import fisher_exact_greater, required_samples, wilson_interval
 
 
 def _run(target, cases, n):
@@ -92,7 +92,7 @@ def test_underpowered_case_advises_instead_of_failing():
     bl = Baseline(
         cases={"x": {"title": "t", "severity": "high", "successes": 0, "samples": 10}}
     )
-    from driftguard.types import CaseResult
+    from driftgate.types import CaseResult
 
     results = [CaseResult("x", "high", "t", samples=10, successes=3)]
     report = compare(bl, results, GatePolicy())

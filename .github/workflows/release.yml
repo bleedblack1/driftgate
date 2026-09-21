@@ -1,0 +1,45 @@
+# Publishes to PyPI on a version tag, using Trusted Publishing (no secrets).
+# Configure the publisher once at:
+#   https://pypi.org/manage/project/driftgate/settings/publishing/
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write          # required for Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pipx run build
+
+      # The artifact must work before it is published, not after.
+      - name: Smoke test the built wheel in a clean environment
+        run: |
+          python -m venv /tmp/v
+          /tmp/v/bin/pip install dist/*.whl
+          cd /tmp && /tmp/v/bin/driftgate packs
+          cd /tmp && /tmp/v/bin/driftgate demo -n 4 || [ $? -eq 1 ]
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

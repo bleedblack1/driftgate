@@ -11,11 +11,11 @@ import asyncio
 
 import pytest
 
-from driftguard import InProcessTarget, corpus
-from driftguard.adapters.inprocess import render_payload
-from driftguard.metrics import compute
-from driftguard.roles import build
-from driftguard.runner import run_corpus
+from driftgate import InProcessTarget, corpus
+from driftgate.adapters.inprocess import render_payload
+from driftgate.metrics import compute
+from driftgate.roles import build
+from driftgate.runner import run_corpus
 
 
 def fetch_ticket(url: str) -> str:

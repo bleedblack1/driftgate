@@ -1,5 +1,5 @@
 # Security regression gate. Fails the PR if the agent got easier to attack.
-name: driftguard
+name: driftgate
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ on:
     paths:
       - "src/**"
       - "prompts/**"
-      - ".driftguard-baseline.json"
+      - ".driftgate-baseline.json"
 
 jobs:
   gate:
@@ -18,23 +18,23 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install driftguard
+      - run: pip install driftgate
 
       # Repeated checks on the same PR replay from disk instead of re-billing.
       - uses: actions/cache@v4
         with:
-          path: .driftguard-cache
-          key: driftguard-${{ hashFiles('.driftguard-baseline.json', 'driftguard.yaml') }}
-          restore-keys: driftguard-
+          path: .driftgate-cache
+          key: driftgate-${{ hashFiles('.driftgate-baseline.json', 'driftgate.yaml') }}
+          restore-keys: driftgate-
 
       - name: Check for security regressions
         env:
-          # whichever provider your driftguard.yaml uses
+          # whichever provider your driftgate.yaml uses
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: driftguard check --markdown driftguard-report.md
+        run: driftgate check --markdown driftgate-report.md
 
       # Post the table even when the gate fails, so reviewers see why.
       - if: always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: driftguard-report.md
+          path: driftgate-report.md

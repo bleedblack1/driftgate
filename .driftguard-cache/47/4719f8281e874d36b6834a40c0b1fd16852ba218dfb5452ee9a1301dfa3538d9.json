@@ -1,0 +1,1 @@
+{"v": 1, "stored_at": 1790021074.7370238, "content": "", "tool_calls": [{"id": "c0", "name": "save_note", "arguments": {"content": "follow up with the vendor on Thursday"}}], "input_tokens": 0, "output_tokens": 0}

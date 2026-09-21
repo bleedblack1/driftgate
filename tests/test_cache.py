@@ -9,12 +9,12 @@ import asyncio
 
 import pytest
 
-from driftguard import corpus
-from driftguard.adapters.agent import AgentTarget
-from driftguard.cache import CachedModel, ResponseCache
-from driftguard.defaults import SYSTEM_PROMPT, TOOLKIT
-from driftguard.providers import ChatResponse, OpenAICompatModel
-from driftguard.runner import derive_canary, run_corpus
+from driftgate import corpus
+from driftgate.adapters.agent import AgentTarget
+from driftgate.cache import CachedModel, ResponseCache
+from driftgate.defaults import SYSTEM_PROMPT, TOOLKIT
+from driftgate.providers import ChatResponse, OpenAICompatModel
+from driftgate.runner import derive_canary, run_corpus
 from tests.fake_server import make_server
 
 CASES = [c for c in corpus.load() if c.id in ("pi-001", "bn-001", "ta-001")]
@@ -189,7 +189,7 @@ def test_corrupt_entry_is_a_miss_not_a_crash(tmp_path):
 
 def test_tool_calls_survive_the_round_trip(tmp_path):
     """A cached response must replay tool calls, or every assertion changes."""
-    from driftguard.providers import ToolCallRequest
+    from driftgate.providers import ToolCallRequest
 
     c = ResponseCache(dir=tmp_path / "c")
     k = "d" * 64

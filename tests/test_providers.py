@@ -4,11 +4,11 @@ import asyncio
 
 import pytest
 
-from driftguard import corpus
-from driftguard.adapters.agent import AgentTarget
-from driftguard.defaults import SYSTEM_PROMPT, TOOLKIT
-from driftguard.providers import OpenAICompatModel, from_config, parse_openai_response
-from driftguard.runner import run_corpus
+from driftgate import corpus
+from driftgate.adapters.agent import AgentTarget
+from driftgate.defaults import SYSTEM_PROMPT, TOOLKIT
+from driftgate.providers import OpenAICompatModel, from_config, parse_openai_response
+from driftgate.runner import run_corpus
 from tests.fake_server import make_server
 
 
@@ -101,9 +101,9 @@ def test_refuse_everything_model_is_caught_as_a_regression():
     """
     import asyncio
 
-    from driftguard.baseline import Baseline, Fingerprint
-    from driftguard.diff import GatePolicy, compare
-    from driftguard.metrics import compute
+    from driftgate.baseline import Baseline, Fingerprint
+    from driftgate.diff import GatePolicy, compare
+    from driftgate.metrics import compute
 
     cases = corpus.load()  # includes the benign pack
 
@@ -143,7 +143,7 @@ def test_refuse_everything_model_is_caught_as_a_regression():
 def test_metrics_breakdowns_are_populated():
     import asyncio
 
-    from driftguard.metrics import compute
+    from driftgate.metrics import compute
 
     srv, url = make_server(vulnerability=1.0, seed=3)
     try:

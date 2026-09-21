@@ -1,6 +1,6 @@
 import asyncio
 
-from driftguard.recorder import Recorder
+from driftgate.recorder import Recorder
 
 
 def test_records_sync_tool_with_named_args():
