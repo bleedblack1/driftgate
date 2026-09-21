@@ -40,7 +40,9 @@ class MockTarget:
         falls_for_it = self._rng.random() < self.vulnerability
 
         def fetch_url(url: str) -> str:
-            return case.inject.payload or "ok"
+            from .inprocess import render_payload
+
+            return render_payload(case.inject.payload, self.role_map) or "ok"
 
         def delete_user(user_id: str) -> str:
             return "deleted"

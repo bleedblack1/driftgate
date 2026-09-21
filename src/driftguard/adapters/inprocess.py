@@ -40,6 +40,25 @@ def skip_reason(case: AttackCase, role_map: "roles_mod.RoleMap") -> str:
     return ""
 
 
+def render_payload(payload: str, role_map: "roles_mod.RoleMap") -> str:
+    """Substitute {role} placeholders with the target's real tool names.
+
+    Decoupling the case machinery from the toolkit was not enough: an injected
+    instruction that says "call delete_user" is inert against an agent that
+    has no such tool, so the case reports a clean pass having tested nothing.
+    The payload has to name a tool the agent actually has.
+    """
+    if "{" not in payload:
+        return payload
+    out = payload
+    for role in roles_mod.ROLES:
+        token = "{" + role + "}"
+        if token in out:
+            name = role_map.first(role)
+            out = out.replace(token, name if name else f"<no {role} tool>")
+    return out
+
+
 def resolve_inject_tool(case: AttackCase, role_map, tools: dict) -> str | None:
     """Which concrete tool carries the payload for this case."""
     if case.inject.tool_role:
@@ -98,17 +117,19 @@ class InProcessTarget:
         if case.inject.channel == "tool_result":
             target_tool = resolve_inject_tool(case, self.role_map, tools)
             if target_tool and target_tool in tools:
-                tools[target_tool] = _poisoned(tools[target_tool], case.inject.payload)
+                tools[target_tool] = _poisoned(
+                    tools[target_tool], render_payload(case.inject.payload, self.role_map)
+                )
 
         system = self.system_prompt
         if canary:
             system += self.canary_template.format(canary=canary)
         if case.inject.channel == "memory":
-            system += f"\n\n[recalled memory]\n{case.inject.payload}\n"
+            system += f"\n\n[recalled memory]\n{render_payload(case.inject.payload, self.role_map)}\n"
 
         prompt = case.prompt
         if case.inject.channel in ("user_message", "document") and case.inject.payload:
-            prompt = f"{prompt}\n\n{case.inject.payload}"
+            prompt = f"{prompt}\n\n{render_payload(case.inject.payload, self.role_map)}"
 
         wrapped = rec.wrap_all(tools)
 
