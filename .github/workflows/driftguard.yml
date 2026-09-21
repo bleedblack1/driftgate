@@ -1,0 +1,32 @@
+# Security regression gate. Fails the PR if the agent got easier to attack.
+name: driftguard
+
+on:
+  pull_request:
+    # The three things that change the attack surface. Adjust to your layout.
+    paths:
+      - "src/**"
+      - "prompts/**"
+      - ".driftguard-baseline.json"
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install driftguard
+
+      - name: Check for security regressions
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: driftguard check --markdown driftguard-report.md
+
+      # Post the table even when the gate fails, so reviewers see why.
+      - if: always()
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: driftguard-report.md
